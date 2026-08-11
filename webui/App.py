@@ -10,16 +10,20 @@ st.set_page_config(
     initial_sidebar_state="auto",
 )
 
-# Main.py 的历史样式会隐藏整个 Streamlit header，以去掉 Deploy/toolbar。
-# 顶部导航本身也位于 header 中，因此入口页用更高 CSS specificity 只恢复
-# header，同时继续隐藏平台工具栏。即使业务页调用 st.stop()，这个规则也会
-# 因 specificity 更高而保持生效，不依赖 page.run() 之后再次注入样式。
+# Main.py 的历史样式会隐藏整个 Streamlit header，以去掉 Deploy/toolbar，并把
+# 主内容顶部留白压到 0.5rem。顶部导航本身也位于 header 中，因此入口页用
+# 更高 CSS specificity 恢复 header 和合理的内容起始位置，同时继续隐藏平台
+# 工具栏。即使业务页调用 st.stop()，这些规则也不依赖 page.run() 后再次注入。
 st.markdown(
     """
     <style>
     html body header[data-testid="stHeader"] {
         display: flex !important;
         visibility: visible !important;
+    }
+
+    html body div[data-testid="stMainBlockContainer"] {
+        padding-top: 4.5rem !important;
     }
 
     html body div[data-testid="stToolbar"],
