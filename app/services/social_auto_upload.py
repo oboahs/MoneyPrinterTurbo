@@ -3,8 +3,8 @@
 This adapter intentionally talks to the upstream ``sau`` CLI instead of copying
 platform automation code into MoneyPrinterTurbo. The upstream project changes
 selectors and anti-bot workarounds frequently; keeping that implementation
-separate lets us pin/update it in the Docker image without coupling the video
-pipeline to individual social sites.
+separate lets us pin/update it without coupling the video pipeline to individual
+social sites.
 """
 
 from __future__ import annotations
@@ -27,6 +27,14 @@ SUPPORTED_PLATFORMS = {
     "bilibili",
     "tencent",
 }
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+LOCAL_RUNTIME_ROOT = PROJECT_ROOT / "storage" / "social-auto-upload"
+LOCAL_SOURCE_DIR = LOCAL_RUNTIME_ROOT / "runtime"
+LOCAL_VENV_DIR = LOCAL_RUNTIME_ROOT / "venv"
+LOCAL_BROWSER_ROOT = LOCAL_RUNTIME_ROOT / "browsers"
+DOCKER_SOURCE_DIR = Path("/opt/social-auto-upload")
+DOCKER_BROWSER_ROOT = Path("/opt/patchright-browsers")
 
 
 def _normalize_platforms(value) -> list[str]:
@@ -58,11 +66,44 @@ def _tail(value: str | None, limit: int = 3000) -> str:
     return text[-limit:]
 
 
+def _looks_like_docker_default(path: str) -> bool:
+    normalized = str(path or "").strip().replace("\\", "/").rstrip("/")
+    return normalized == "/opt/social-auto-upload"
+
+
+def _local_sau_command() -> Path:
+    if os.name == "nt":
+        return LOCAL_VENV_DIR / "Scripts" / "sau.exe"
+    return LOCAL_VENV_DIR / "bin" / "sau"
+
+
 class SocialAutoUploadService:
     """Invoke the pinned social-auto-upload CLI for one platform at a time."""
 
     def __init__(self):
         self.refresh_config()
+
+    @staticmethod
+    def _using_docker_runtime() -> bool:
+        return DOCKER_SOURCE_DIR.is_dir()
+
+    def _default_workdir(self) -> str:
+        if self._using_docker_runtime():
+            return str(DOCKER_SOURCE_DIR)
+        return str(LOCAL_SOURCE_DIR)
+
+    def _browser_root(self) -> Path:
+        configured = str(os.getenv("PLAYWRIGHT_BROWSERS_PATH", "") or "").strip()
+        if configured:
+            return Path(configured)
+        if self._using_docker_runtime():
+            return DOCKER_BROWSER_ROOT
+        return LOCAL_BROWSER_ROOT
+
+    def _subprocess_env(self) -> dict[str, str]:
+        env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        env.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(self._browser_root()))
+        return env
 
     def refresh_config(self) -> None:
         """Reload mutable publishing settings without requiring a process restart."""
@@ -101,12 +142,17 @@ class SocialAutoUploadService:
         self.command = str(
             config.app.get("social_auto_upload_command", "sau") or "sau"
         ).strip()
-        self.workdir = str(
-            config.app.get(
-                "social_auto_upload_workdir", "/opt/social-auto-upload"
-            )
-            or ""
+
+        configured_workdir = str(
+            config.app.get("social_auto_upload_workdir", "") or ""
         ).strip()
+        if not configured_workdir or (
+            not self._using_docker_runtime()
+            and _looks_like_docker_default(configured_workdir)
+        ):
+            configured_workdir = self._default_workdir()
+        self.workdir = configured_workdir
+
         self.timeout = max(
             60,
             int(config.app.get("social_auto_upload_timeout", 900) or 900),
@@ -129,9 +175,20 @@ class SocialAutoUploadService:
         return self.accounts.get(platform, self.default_account)
 
     def _resolve_command(self) -> str | None:
-        if os.path.isabs(self.command) or os.sep in self.command:
+        if os.path.isabs(self.command) or os.sep in self.command or (
+            os.altsep and os.altsep in self.command
+        ):
             return self.command if Path(self.command).is_file() else None
-        return shutil.which(self.command)
+
+        resolved = shutil.which(self.command)
+        if resolved:
+            return resolved
+
+        if self.command == "sau" and not self._using_docker_runtime():
+            local_command = _local_sau_command()
+            if local_command.is_file():
+                return str(local_command)
+        return None
 
     def runtime_status(self) -> dict:
         """Return inexpensive local runtime diagnostics for the WebUI."""
@@ -139,9 +196,7 @@ class SocialAutoUploadService:
         command = self._resolve_command()
         workdir = Path(self.workdir) if self.workdir else None
         cookies_dir = workdir / "cookies" if workdir else None
-        browser_root = Path(
-            os.getenv("PLAYWRIGHT_BROWSERS_PATH", "/opt/patchright-browsers")
-        )
+        browser_root = self._browser_root()
         browser_ready = False
         if browser_root.is_dir():
             try:
@@ -149,8 +204,10 @@ class SocialAutoUploadService:
             except OSError:
                 browser_ready = False
 
+        using_docker = self._using_docker_runtime()
         return {
             "ready": bool(command and workdir and workdir.is_dir() and browser_ready),
+            "runtime_kind": "docker" if using_docker else "local",
             "command": command or "",
             "configured_command": self.command,
             "workdir": str(workdir) if workdir else "",
@@ -159,6 +216,13 @@ class SocialAutoUploadService:
             "cookies_dir_ready": bool(cookies_dir and cookies_dir.is_dir()),
             "browser_root": str(browser_root),
             "browser_ready": browser_ready,
+            "setup_command": (
+                "setup-social-publishing.bat"
+                if os.name == "nt" and not using_docker
+                else "./setup-social-publishing.sh"
+                if not using_docker
+                else "docker compose up -d --build"
+            ),
         }
 
     def check_account(self, platform: str, account: str | None = None) -> dict:
@@ -206,7 +270,7 @@ class SocialAutoUploadService:
                 text=True,
                 timeout=min(self.timeout, 45),
                 check=False,
-                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                env=self._subprocess_env(),
             )
         except subprocess.TimeoutExpired:
             return {
@@ -322,7 +386,7 @@ class SocialAutoUploadService:
                 "account": account,
                 "error": (
                     f"social-auto-upload CLI not found: {self.command}. "
-                    "Install the upstream project and patchright Chromium first."
+                    "Install the upstream project and Patchright Chromium first."
                 ),
             }
 
@@ -351,7 +415,7 @@ class SocialAutoUploadService:
                 text=True,
                 timeout=self.timeout,
                 check=False,
-                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                env=self._subprocess_env(),
             )
         except subprocess.TimeoutExpired as exc:
             logger.error(
