@@ -20,7 +20,7 @@ echo ***** WebUI entry: %CURRENT_DIR%\webui\App.py *****
 
 if not exist "%CURRENT_DIR%\webui\App.py" (
     echo ***** ERROR: webui\App.py was not found. *****
-    echo ***** Your local checkout does not contain the new top-navigation WebUI entrypoint. *****
+    echo ***** Your local checkout does not contain the new navigation WebUI entrypoint. *****
     echo ***** Run: git pull origin main *****
     pause
     exit /b 1
@@ -41,7 +41,7 @@ if not defined MPT_WEBUI_PORT set "MPT_WEBUI_PORT=8501"
 
 rem A previous checkout may already have .venv, so "first run only" dependency setup
 rem is not enough after git pull. Verify the locked Streamlit version required by the
-rem top navigation and refresh the environment only when it is stale.
+rem in-app navigation and refresh the environment only when it is stale.
 where uv >nul 2>nul
 set "UV_AVAILABLE=%ERRORLEVEL%"
 
@@ -114,5 +114,5 @@ if not "%SELECTED_WEBUI_PORT%"=="%MPT_WEBUI_PORT%" (
 set "MPT_WEBUI_PORT=%SELECTED_WEBUI_PORT%"
 
 echo ***** WebUI address: http://%MPT_WEBUI_HOST%:%MPT_WEBUI_PORT% *****
-echo ***** Expected top navigation: Video Generation ^| Social Publishing *****
+echo ***** Expected primary tabs inside page: Video Generation ^| Social Publishing *****
 %STREAMLIT_CMD% run .\webui\App.py --server.address=%MPT_WEBUI_HOST% --server.port=%MPT_WEBUI_PORT% --browser.serverAddress=%MPT_WEBUI_HOST% --browser.gatherUsageStats=False --client.toolbarMode=minimal --logger.hideWelcomeMessage=True --server.showEmailPrompt=False --server.enableCORS=True
