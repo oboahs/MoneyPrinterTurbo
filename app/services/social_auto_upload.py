@@ -62,6 +62,10 @@ class SocialAutoUploadService:
     """Invoke the pinned social-auto-upload CLI for one platform at a time."""
 
     def __init__(self):
+        self.refresh_config()
+
+    def refresh_config(self) -> None:
+        """Reload mutable publishing settings without requiring a process restart."""
         self.enabled = bool(config.app.get("social_auto_upload_enabled", False))
         self.auto_upload = bool(
             config.app.get("social_auto_upload_auto_upload", False)
@@ -118,6 +122,7 @@ class SocialAutoUploadService:
 
     def is_configured(self) -> bool:
         """Configuration presence only; runtime availability is checked on upload."""
+        self.refresh_config()
         return bool(self.enabled and self.platforms)
 
     def account_for(self, platform: str) -> str:
@@ -127,6 +132,107 @@ class SocialAutoUploadService:
         if os.path.isabs(self.command) or os.sep in self.command:
             return self.command if Path(self.command).is_file() else None
         return shutil.which(self.command)
+
+    def runtime_status(self) -> dict:
+        """Return inexpensive local runtime diagnostics for the WebUI."""
+        self.refresh_config()
+        command = self._resolve_command()
+        workdir = Path(self.workdir) if self.workdir else None
+        cookies_dir = workdir / "cookies" if workdir else None
+        browser_root = Path(
+            os.getenv("PLAYWRIGHT_BROWSERS_PATH", "/opt/patchright-browsers")
+        )
+        browser_ready = False
+        if browser_root.is_dir():
+            try:
+                browser_ready = any(browser_root.iterdir())
+            except OSError:
+                browser_ready = False
+
+        return {
+            "ready": bool(command and workdir and workdir.is_dir() and browser_ready),
+            "command": command or "",
+            "configured_command": self.command,
+            "workdir": str(workdir) if workdir else "",
+            "workdir_ready": bool(workdir and workdir.is_dir()),
+            "cookies_dir": str(cookies_dir) if cookies_dir else "",
+            "cookies_dir_ready": bool(cookies_dir and cookies_dir.is_dir()),
+            "browser_root": str(browser_root),
+            "browser_ready": browser_ready,
+        }
+
+    def check_account(self, platform: str, account: str | None = None) -> dict:
+        """Validate one saved social-auto-upload login without publishing anything."""
+        self.refresh_config()
+        platform = str(platform or "").strip().lower()
+        if platform not in SUPPORTED_PLATFORMS:
+            return {
+                "success": False,
+                "platform": platform,
+                "account": account or "",
+                "error": f"unsupported social-auto-upload platform: {platform}",
+            }
+
+        resolved_account = str(account or self.account_for(platform) or "").strip()
+        if not resolved_account:
+            return {
+                "success": False,
+                "platform": platform,
+                "account": "",
+                "error": "no account configured",
+            }
+
+        command = self._resolve_command()
+        if not command:
+            return {
+                "success": False,
+                "platform": platform,
+                "account": resolved_account,
+                "error": f"social-auto-upload CLI not found: {self.command}",
+            }
+
+        cwd = self.workdir if self.workdir and os.path.isdir(self.workdir) else None
+        try:
+            result = subprocess.run(
+                [
+                    command,
+                    platform,
+                    "check",
+                    "--account",
+                    resolved_account,
+                ],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=min(self.timeout, 45),
+                check=False,
+                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "platform": platform,
+                "account": resolved_account,
+                "error": "account check timed out",
+            }
+        except OSError as exc:
+            return {
+                "success": False,
+                "platform": platform,
+                "account": resolved_account,
+                "error": str(exc),
+            }
+
+        stdout = _tail(result.stdout, limit=1000)
+        stderr = _tail(result.stderr, limit=1000)
+        return {
+            "success": result.returncode == 0,
+            "platform": platform,
+            "account": resolved_account,
+            "returncode": result.returncode,
+            "message": stdout,
+            "error": "" if result.returncode == 0 else (stderr or stdout or "invalid login"),
+        }
 
     def _build_command(
         self,
@@ -171,6 +277,7 @@ class SocialAutoUploadService:
         description: str = "",
         tags: Iterable[str] | None = None,
     ) -> dict:
+        self.refresh_config()
         platform = str(platform or "").strip().lower()
         if platform not in SUPPORTED_PLATFORMS:
             return {
