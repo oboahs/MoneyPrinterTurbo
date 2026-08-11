@@ -23,7 +23,7 @@ ARG SOCIAL_AUTO_UPLOAD_REF=008e4ff66abdf48eb1f4b999272ef979711af436
 
 # Install system dependencies with retry logic.
 # intel-media-va-driver provides the iHD VA-API backend used by Intel Quick Sync
-# on NAS hosts that expose /dev/dri to this container.  The remaining desktop
+# on NAS hosts that expose /dev/dri to this container. The remaining desktop
 # libraries are required by patchright Chromium used for local social publishing.
 RUN if [ "$DOCKER_BUILD_MIRROR" = "china" ]; then \
         echo "deb http://mirrors.aliyun.com/debian bullseye main" > /etc/apt/sources.list && \
@@ -118,9 +118,10 @@ RUN if [ "$PIP_USE_OFFICIAL" = "1" ]; then \
     fi
 
 # Install the browser-based social publishing runtime separately from the main
-# Python dependency graph.  --no-deps avoids downgrading MoneyPrinterTurbo's
-# requests package to the exact version pinned by the upstream project; the
-# compatible browser/runtime dependencies are installed explicitly instead.
+# Python dependency graph. --no-deps avoids downgrading MoneyPrinterTurbo's
+# requests package to the exact version pinned by the upstream project. Install
+# setuptools explicitly and disable build isolation for the editable install so
+# NAS builds do not trigger a second implicit package-index access.
 RUN mkdir -p /opt/social-auto-upload && \
     git -C /opt/social-auto-upload init && \
     git -C /opt/social-auto-upload remote add origin "$SOCIAL_AUTO_UPLOAD_REPO" && \
@@ -129,23 +130,26 @@ RUN mkdir -p /opt/social-auto-upload && \
     cp /opt/social-auto-upload/conf.example.py /opt/social-auto-upload/conf.py && \
     if [ "$PIP_USE_OFFICIAL" = "1" ]; then \
         pip install --no-cache-dir --retries 3 --timeout 60 \
+            'setuptools>=69' \
             patchright==1.58.2 \
             'opencv-python>=4.13.0.92' \
             qrcode==8.2 \
             'segno>=1.6.6' && \
-        pip install --no-cache-dir --no-deps -e /opt/social-auto-upload; \
+        pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/social-auto-upload; \
     else \
         (pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com --retries 3 --timeout 60 \
+            'setuptools>=69' \
             patchright==1.58.2 \
             'opencv-python>=4.13.0.92' \
             qrcode==8.2 \
             'segno>=1.6.6' || \
          pip install --no-cache-dir --retries 3 --timeout 60 \
+            'setuptools>=69' \
             patchright==1.58.2 \
             'opencv-python>=4.13.0.92' \
             qrcode==8.2 \
             'segno>=1.6.6') && \
-        pip install --no-cache-dir --no-deps -e /opt/social-auto-upload; \
+        pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/social-auto-upload; \
     fi && \
     mkdir -p /opt/social-auto-upload/cookies && \
     if [ "$DOCKER_BUILD_MIRROR" = "china" ]; then \
