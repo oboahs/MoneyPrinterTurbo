@@ -756,6 +756,37 @@ def _search_videos_with_cache(
         return items
 
 
+def search_video_candidates(
+    source: str,
+    search_term: str,
+    minimum_duration: int,
+    video_aspect: VideoAspect = VideoAspect.portrait,
+) -> List[MaterialInfo]:
+    """Search online material candidates without downloading them.
+
+    This is used by the optional WebUI review flow. It intentionally reuses the
+    same provider implementations, orientation filtering, API-key handling and
+    24-hour search cache as the normal generation pipeline.
+    """
+    normalized_source = str(source or "pexels").strip().lower()
+    searchers = {
+        "pexels": search_videos_pexels,
+        "pixabay": search_videos_pixabay,
+        "coverr": search_videos_coverr,
+    }
+    remote_search_videos = searchers.get(normalized_source)
+    if remote_search_videos is None:
+        raise ValueError(f"unsupported online video source: {source}")
+
+    return _search_videos_with_cache(
+        provider=normalized_source,
+        search_videos=remote_search_videos,
+        search_term=search_term,
+        minimum_duration=minimum_duration,
+        video_aspect=VideoAspect(video_aspect),
+    )
+
+
 def download_videos(
     task_id: str,
     search_terms: List[str],
@@ -765,24 +796,17 @@ def download_videos(
     audio_duration: float = 0.0,
     max_clip_duration: int = 5,
     match_script_order: bool = False,
+    preferred_items: List[MaterialInfo] | None = None,
 ) -> List[str]:
-    provider = "pexels"
-    remote_search_videos = search_videos_pexels
-    if source == "pixabay":
-        provider = "pixabay"
-        remote_search_videos = search_videos_pixabay
-    elif source == "coverr":
-        provider = "coverr"
-        remote_search_videos = search_videos_coverr
+    source = str(source or "pexels").strip().lower()
 
     def search_videos(
         search_term: str,
         minimum_duration: int,
         video_aspect: VideoAspect,
     ) -> List[MaterialInfo]:
-        return _search_videos_with_cache(
-            provider=provider,
-            search_videos=remote_search_videos,
+        return search_video_candidates(
+            source=source,
             search_term=search_term,
             minimum_duration=minimum_duration,
             video_aspect=video_aspect,
@@ -794,7 +818,7 @@ def download_videos(
     elif material_directory and not os.path.isdir(material_directory):
         material_directory = ""
 
-    if match_script_order:
+    if match_script_order and not preferred_items:
         return _download_videos_by_script_order(
             task_id=task_id,
             search_terms=search_terms,
@@ -808,6 +832,22 @@ def download_videos(
     valid_video_items = []
     valid_video_urls = []
     found_duration = 0.0
+
+    # WebUI-reviewed materials are trusted only through the internal task channel.
+    # Keep them first, then append the normal search pool as an automatic fallback.
+    # This way an expired CDN URL or a narration that is longer than the preview
+    # estimate cannot make the generation fail solely because review was enabled.
+    reviewed_items = _filter_materials_by_aspect(
+        list(preferred_items or []),
+        video_aspect,
+    )
+    for item in reviewed_items:
+        if item.provider != source or not item.url or item.url in valid_video_urls:
+            continue
+        valid_video_items.append(item)
+        valid_video_urls.append(item.url)
+        found_duration += item.duration
+
     for search_term in search_terms:
         video_items = search_videos(
             search_term=search_term,
@@ -829,7 +869,7 @@ def download_videos(
     material_sources: list[dict[str, Any]] = []
 
     concat_mode_value = getattr(video_concat_mode, "value", video_concat_mode)
-    if concat_mode_value == VideoConcatMode.random.value:
+    if concat_mode_value == VideoConcatMode.random.value and not preferred_items:
         random.shuffle(valid_video_items)
 
     total_duration = 0.0

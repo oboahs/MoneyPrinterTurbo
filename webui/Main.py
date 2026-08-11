@@ -51,6 +51,7 @@ from app.services import version_checker
 from app.utils.logging_utils import configure_terminal_logger
 from app.utils import utils
 from webui.subtitle_preview import render_subtitle_preview
+from webui import material_review
 from webui.nas_hardware_acceleration import render_nas_hardware_acceleration_settings
 
 st.set_page_config(
@@ -2369,6 +2370,133 @@ def _render_script_settings(panel, params):
             )
 
 
+def _dismiss_material_review_dialog():
+    st.session_state["material_review_dialog_open"] = False
+
+
+def _material_review_fingerprint(params) -> str:
+    return material_review.build_review_fingerprint(
+        source=params.video_source,
+        video_aspect=params.video_aspect,
+        video_script=params.video_script,
+        video_terms=params.video_terms,
+        clip_duration=params.video_clip_duration,
+        video_count=params.video_count,
+        match_script_order=params.match_materials_to_script,
+    )
+
+
+def _get_confirmed_material_review_materials(params):
+    if params.video_source == "local":
+        return None
+    plan = st.session_state.get("material_review_plan")
+    if not plan:
+        return None
+    current_fingerprint = _material_review_fingerprint(params)
+    if (
+        plan.get("fingerprint") != current_fingerprint
+        or st.session_state.get("material_review_confirmed_fingerprint")
+        != current_fingerprint
+    ):
+        return None
+    materials = material_review.confirmed_materials(plan)
+    return materials or None
+
+
+@st.dialog(
+    tr("Filter Materials"),
+    width="large",
+    on_dismiss=_dismiss_material_review_dialog,
+)
+def _render_material_review_dialog():
+    plan = st.session_state.get("material_review_plan") or {}
+    slots = list(plan.get("slots") or [])
+    if not slots:
+        st.warning(tr("Material Fetch Empty"))
+        return
+
+    st.caption(tr("Material Review Help").format(count=len(slots)))
+    if plan.get("capped"):
+        st.info(tr("Material Review Capped"))
+
+    for index, slot in enumerate(slots):
+        item = slot.get("item")
+        if item is None:
+            continue
+        source_info = item.source_info if isinstance(item.source_info, dict) else {}
+        with st.container(border=True):
+            preview_col, action_col = st.columns([1.25, 1.0], vertical_alignment="top")
+            with preview_col:
+                st.markdown(tr("Material Item").format(index=index + 1))
+                st.video(item.url)
+            with action_col:
+                st.caption(
+                    f"{item.provider} · {int(item.duration or 0)}s · "
+                    f"{source_info.get('asset_id') or '-'}"
+                )
+                st.write(f"**{tr('Video Keywords')}**: {slot.get('term') or '-'}")
+                query_key = (
+                    f"material_review_query_{plan.get('fingerprint', '')[:10]}_{index}"
+                )
+                st.session_state.setdefault(query_key, slot.get("term") or "")
+                replacement_term = st.text_input(
+                    tr("Replacement Search Term"),
+                    key=query_key,
+                ).strip()
+                if st.button(
+                    tr("Search Replacement"),
+                    key=f"replace_material_{plan.get('fingerprint', '')[:10]}_{index}",
+                    icon=":material/refresh:",
+                    use_container_width=True,
+                ):
+                    with st.spinner(tr("Searching Replacement Material")):
+                        replacement = material_review.find_replacement(
+                            plan=plan,
+                            slot_index=index,
+                            search_term=replacement_term,
+                        )
+                    if replacement is None:
+                        st.warning(tr("No Replacement Material"))
+                    else:
+                        plan["slots"][index] = replacement
+                        st.session_state["material_review_plan"] = plan
+                        st.session_state["material_review_confirmed_fingerprint"] = ""
+                        st.toast(tr("Material Replacement Updated"))
+                        st.rerun(scope="fragment")
+
+                source_page = source_info.get("source_page")
+                if source_page:
+                    st.link_button(
+                        tr("Open Material Source"),
+                        source_page,
+                        icon=":material/open_in_new:",
+                        use_container_width=True,
+                    )
+
+    cancel_col, confirm_col = st.columns(2)
+    if cancel_col.button(
+        tr("Cancel Material Review"),
+        key="cancel_material_review",
+        use_container_width=True,
+    ):
+        st.session_state["material_review_dialog_open"] = False
+        st.rerun(scope="app")
+    if confirm_col.button(
+        tr("Confirm Material Selection"),
+        key="confirm_material_review",
+        type="primary",
+        icon=":material/check:",
+        use_container_width=True,
+    ):
+        st.session_state["material_review_confirmed_fingerprint"] = plan.get(
+            "fingerprint", ""
+        )
+        st.session_state["material_review_dialog_open"] = False
+        st.toast(tr("Material Selection Confirmed"))
+        st.rerun(scope="app")
+
+
+
 def _render_video_settings(panel, params):
     """渲染视频设置并返回本次选择的本地素材。"""
     uploaded_files = []
@@ -2514,6 +2642,91 @@ def _render_video_settings(panel, params):
                 default_value=1,
                 key="video_count_select",
             )
+
+
+            if params.video_source != "local":
+                review_fingerprint = _material_review_fingerprint(params)
+                review_plan = st.session_state.get("material_review_plan")
+                plan_is_current = bool(
+                    review_plan
+                    and review_plan.get("fingerprint") == review_fingerprint
+                    and review_plan.get("slots")
+                )
+                if review_plan and not plan_is_current:
+                    st.warning(tr("Material Review Stale"))
+
+                fetch_col, filter_col = st.columns(2)
+                if fetch_col.button(
+                    tr("Fetch Materials"),
+                    key="fetch_materials_button",
+                    icon=":material/download:",
+                    use_container_width=True,
+                ):
+                    review_terms = material_review.normalize_terms(params.video_terms)
+                    if not review_terms:
+                        st.warning(tr("Material Fetch Requires Keywords"))
+                    else:
+                        try:
+                            with st.spinner(tr("Fetching Materials")):
+                                review_plan = material_review.fetch_review_plan(
+                                    source=params.video_source,
+                                    video_aspect=params.video_aspect,
+                                    video_script=params.video_script,
+                                    video_terms=params.video_terms,
+                                    clip_duration=params.video_clip_duration,
+                                    video_count=params.video_count,
+                                    match_script_order=params.match_materials_to_script,
+                                )
+                        except Exception as exc:
+                            logger.warning(
+                                f"material review fetch failed: {type(exc).__name__}: {exc}"
+                            )
+                            st.error(
+                                tr("Material Fetch Failed").format(error=str(exc))
+                            )
+                        else:
+                            st.session_state["material_review_plan"] = review_plan
+                            st.session_state["material_review_confirmed_fingerprint"] = ""
+                            st.session_state["material_review_dialog_open"] = False
+                            plan_is_current = bool(review_plan.get("slots"))
+                            if plan_is_current:
+                                st.toast(
+                                    tr("Material Fetch Complete").format(
+                                        count=len(review_plan["slots"])
+                                    )
+                                )
+                            else:
+                                st.warning(tr("Material Fetch Empty"))
+
+                if filter_col.button(
+                    tr("Filter Materials"),
+                    key="filter_materials_button",
+                    icon=":material/video_library:",
+                    use_container_width=True,
+                    disabled=not plan_is_current,
+                ):
+                    st.session_state["material_review_dialog_open"] = True
+
+                if plan_is_current:
+                    item_count = len(review_plan.get("slots") or [])
+                    if (
+                        st.session_state.get("material_review_confirmed_fingerprint")
+                        == review_fingerprint
+                    ):
+                        st.success(
+                            tr("Material Review Ready").format(count=item_count)
+                        )
+                    else:
+                        st.info(
+                            tr("Material Review Pending").format(count=item_count)
+                        )
+
+                if (
+                    st.session_state.get("material_review_dialog_open", False)
+                    and plan_is_current
+                ):
+                    _render_material_review_dialog()
+
 
             video_codec_options = [
                 (tr("Default Video Encoder"), DEFAULT_VIDEO_CODEC_OPTION),
@@ -4072,6 +4285,7 @@ def _render_generation_controls(
                 params=params,
                 capture_logs=not config.ui.get("hide_log", False),
                 voice_preview=reusable_voice_preview,
+                preferred_materials=_get_confirmed_material_review_materials(params),
             )
         except Exception:
             _remove_active_generation_task(task_id)

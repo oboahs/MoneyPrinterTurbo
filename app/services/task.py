@@ -563,7 +563,9 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
     return subtitle_path
 
 
-def get_video_materials(task_id, params, video_terms, audio_duration):
+def get_video_materials(
+    task_id, params, video_terms, audio_duration, preferred_materials=None
+):
     if params.video_source == "local":
         logger.info("\n\n## preprocess local materials")
         materials = video.preprocess_video(
@@ -594,6 +596,7 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
             audio_duration=audio_duration * params.video_count,
             max_clip_duration=params.video_clip_duration,
             match_script_order=params.match_materials_to_script,
+            preferred_items=preferred_materials,
         )
         if not downloaded_videos:
             _mark_task_failed(
@@ -1045,6 +1048,7 @@ def _run_pipeline(
     params: VideoParams,
     stop_at: str = "video",
     voice_preview: dict | None = None,
+    preferred_materials=None,
 ):
     logger.info(f"start task: {task_id}, stop_at: {stop_at}")
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=5)
@@ -1170,7 +1174,11 @@ def _run_pipeline(
 
     # 5. Get video materials
     downloaded_videos = get_video_materials(
-        task_id, params, video_terms, audio_duration
+        task_id,
+        params,
+        video_terms,
+        audio_duration,
+        preferred_materials=preferred_materials,
     )
     if not downloaded_videos:
         return _mark_task_failed(
@@ -1279,6 +1287,7 @@ def start(
     params: VideoParams,
     stop_at: str = "video",
     voice_preview: dict | None = None,
+    preferred_materials=None,
 ):
     """执行任务流水线，并确保未预期异常也会转换成可查询的失败状态。"""
     try:
@@ -1287,6 +1296,7 @@ def start(
             params,
             stop_at=stop_at,
             voice_preview=voice_preview,
+            preferred_materials=preferred_materials,
         )
     except Exception as exc:
         logger.exception(
