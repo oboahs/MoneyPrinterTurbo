@@ -1,0 +1,276 @@
+name: Apply subtitle preview
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/apply-subtitle-preview.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Patch subtitle preview
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("webui/Main.py")
+          text = path.read_text(encoding="utf-8")
+
+          if "def _render_subtitle_preview(" not in text:
+              import_anchor = "from loguru import logger\nfrom streamlit_tour import Tour\n"
+              import_replacement = (
+                  "from loguru import logger\n"
+                  "from PIL import Image, ImageDraw, ImageFont\n"
+                  "from streamlit_tour import Tour\n"
+              )
+              if import_anchor not in text:
+                  raise RuntimeError("Main.py import anchor not found")
+              text = text.replace(import_anchor, import_replacement, 1)
+
+              function_anchor = "\ndef _render_subtitle_settings(panel, params):\n"
+              helper = r'''
+
+def _subtitle_preview_ui_text(chinese: str, english: str) -> str:
+    """返回字幕预览区域的轻量本地化文案。"""
+    language = str(st.session_state.get("ui_language", "") or "").lower()
+    return chinese if language.startswith("zh") else english
+
+
+def _normalize_preview_color(value, fallback="#000000"):
+    value = str(value or "").strip()
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+        return value
+    return fallback
+
+
+def _build_subtitle_preview_image(params, preview_text: str):
+    """
+    使用最终视频的真实分辨率和字幕计算规则生成静态预览帧。
+
+    预览不会参与成片，只用于让用户在生成前确认字幕字号、换行和垂直位置。
+    位置、最大宽度、背景尺寸和自定义位置约束都与 video.generate_video 中的
+    字幕渲染保持一致；页面展示时再由 Streamlit 等比缩小。
+    """
+    try:
+        aspect = VideoAspect(params.video_aspect)
+    except Exception:
+        aspect = VideoAspect.portrait
+    video_width, video_height = aspect.to_resolution()
+
+    # 使用中性深灰背景和轻微网格，避免黑/白字幕在纯色底图上难以判断。
+    image = Image.new("RGB", (video_width, video_height), (38, 42, 48))
+    canvas = ImageDraw.Draw(image)
+    grid_step = max(80, int(min(video_width, video_height) * 0.08))
+    for x in range(0, video_width, grid_step):
+        canvas.line((x, 0, x, video_height), fill=(48, 53, 60), width=1)
+    for y in range(0, video_height, grid_step):
+        canvas.line((0, y, video_width, y), fill=(48, 53, 60), width=1)
+
+    # 5% / 50% / 95% 参考线对应现有 top / center / bottom 的关键位置。
+    for ratio in (0.05, 0.5, 0.95):
+        y = int(round(video_height * ratio))
+        canvas.line((0, y, video_width, y), fill=(82, 89, 99), width=2)
+
+    if not getattr(params, "subtitle_enabled", True) or not str(preview_text or "").strip():
+        return image
+
+    font_size = max(1, int(getattr(params, "font_size", 60) or 60))
+    stroke_width = max(0, int(float(getattr(params, "stroke_width", 0) or 0)))
+    font_path = os.path.join(font_dir, str(getattr(params, "font_name", "") or ""))
+    try:
+        font = ImageFont.truetype(font_path, font_size)
+    except Exception as exc:
+        logger.warning(f"failed to load subtitle preview font: {font_path}, {exc}")
+        return image
+
+    raw_background = getattr(params, "text_background_color", False)
+    if isinstance(raw_background, bool):
+        background_color = "#000000" if raw_background else None
+    else:
+        background_color = str(raw_background or "").strip() or None
+
+    rounded_background = bool(
+        getattr(params, "rounded_subtitle_background", False) and background_color
+    )
+    max_width = video_width * 0.9
+    padding_ratio = 0.4 if rounded_background else 0.6
+    pad_x = int(font_size * padding_ratio) if background_color else 0
+    text_max_width = max(1, int(max_width) - 2 * pad_x)
+
+    wrapped_text, text_height = video.wrap_text(
+        str(preview_text).strip(),
+        max_width=text_max_width,
+        font=font_path,
+        fontsize=font_size,
+    )
+    interline = int(font_size * 0.25)
+    line_count = wrapped_text.count("\n") + 1
+    vertical_padding = int(font_size * 0.35)
+    clip_height = int(text_height + vertical_padding + interline * line_count)
+
+    if rounded_background:
+        try:
+            measured_text_width = max(
+                int(font.getbbox(line)[2] - font.getbbox(line)[0])
+                for line in wrapped_text.split("\n")
+                if line
+            )
+        except Exception:
+            measured_text_width = int(max_width)
+        clip_width = max(1, min(int(max_width), measured_text_width + 2 * pad_x))
+    else:
+        clip_width = int(max_width)
+
+    subtitle_layer = Image.new("RGBA", (clip_width, clip_height), (0, 0, 0, 0))
+    subtitle_draw = ImageDraw.Draw(subtitle_layer)
+    if background_color:
+        fill = _normalize_preview_color(background_color)
+        if rounded_background:
+            radius = max(8, int(font_size * 0.4))
+            rgba = (*tuple(int(fill[i : i + 2], 16) for i in (1, 3, 5)), 140)
+            subtitle_draw.rounded_rectangle(
+                (0, 0, clip_width - 1, clip_height - 1),
+                radius=radius,
+                fill=rgba,
+            )
+        else:
+            subtitle_draw.rectangle(
+                (0, 0, clip_width - 1, clip_height - 1),
+                fill=_normalize_preview_color(fill),
+            )
+
+    text_color = _normalize_preview_color(
+        getattr(params, "text_fore_color", "#FFFFFF"), "#FFFFFF"
+    )
+    stroke_color = _normalize_preview_color(
+        getattr(params, "stroke_color", "#000000"), "#000000"
+    )
+    text_bbox = subtitle_draw.multiline_textbbox(
+        (0, 0),
+        wrapped_text,
+        font=font,
+        spacing=interline,
+        align="center",
+        stroke_width=stroke_width,
+    )
+    visible_width = text_bbox[2] - text_bbox[0]
+    visible_height = text_bbox[3] - text_bbox[1]
+    text_x = (clip_width - visible_width) / 2 - text_bbox[0]
+    text_y = (clip_height - visible_height) / 2 - text_bbox[1]
+    subtitle_draw.multiline_text(
+        (text_x, text_y),
+        wrapped_text,
+        font=font,
+        fill=text_color,
+        spacing=interline,
+        align="center",
+        stroke_width=stroke_width,
+        stroke_fill=stroke_color,
+    )
+
+    position = str(getattr(params, "subtitle_position", "bottom") or "bottom")
+    if position == "bottom":
+        y = video_height * 0.95 - clip_height
+    elif position == "top":
+        y = video_height * 0.05
+    elif position == "custom":
+        margin = 10
+        max_y = video_height - clip_height - margin
+        min_y = margin
+        custom_position = float(getattr(params, "custom_position", 70.0) or 70.0)
+        custom_y = (video_height - clip_height) * (custom_position / 100.0)
+        y = max(min_y, min(custom_y, max_y))
+    else:
+        y = (video_height - clip_height) / 2
+
+    x = (video_width - clip_width) / 2
+    image.paste(subtitle_layer, (int(round(x)), int(round(y))), subtitle_layer)
+    return image
+
+
+def _render_subtitle_preview(params):
+    """在字幕设置区域展示与当前参数联动的静态预览。"""
+    st.markdown(
+        f"**{_subtitle_preview_ui_text('字幕预览', 'Subtitle Preview')}**"
+    )
+    default_text = _subtitle_preview_ui_text(
+        "这是一段字幕预览文字",
+        "This is a subtitle preview",
+    )
+    st.session_state.setdefault("subtitle_preview_text_input", default_text)
+    preview_text = st.text_input(
+        _subtitle_preview_ui_text("预览文字", "Preview text"),
+        key="subtitle_preview_text_input",
+        disabled=not getattr(params, "subtitle_enabled", True),
+    )
+
+    try:
+        preview_image = _build_subtitle_preview_image(params, preview_text)
+        st.image(preview_image, use_container_width=True)
+        try:
+            aspect = VideoAspect(params.video_aspect)
+        except Exception:
+            aspect = VideoAspect.portrait
+        width, height = aspect.to_resolution()
+        st.caption(
+            _subtitle_preview_ui_text(
+                f"按最终视频 {width} × {height} 的真实坐标渲染，页面中仅等比缩小显示。",
+                f"Rendered at the final {width} × {height} video coordinates and only scaled down in the page.",
+            )
+        )
+    except Exception as exc:
+        logger.warning(f"failed to render subtitle preview: {exc}")
+        st.caption(
+            _subtitle_preview_ui_text(
+                "当前字幕预览暂不可用，但不会影响视频生成。",
+                "Subtitle preview is currently unavailable; video generation is unaffected.",
+            )
+        )
+'''
+              if function_anchor not in text:
+                  raise RuntimeError("subtitle settings function anchor not found")
+              text = text.replace(function_anchor, helper + function_anchor, 1)
+
+              button_anchor = '''            if st.button(
+                tr("Restore Default Subtitle Settings"),'''
+              preview_block = '''            _render_subtitle_preview(params)\n\n'''
+              if button_anchor not in text:
+                  raise RuntimeError("restore subtitle settings button anchor not found")
+              text = text.replace(button_anchor, preview_block + button_anchor, 1)
+
+              path.write_text(text, encoding="utf-8")
+
+          # 这个工作流只用于一次性把补丁落到 main。完成后从仓库删除，避免留下维护负担。
+          workflow_path = Path(".github/workflows/apply-subtitle-preview.yml")
+          if workflow_path.exists():
+              workflow_path.unlink()
+          PY
+
+      - name: Validate syntax
+        run: python -m py_compile webui/Main.py
+
+      - name: Commit directly to main
+        shell: bash
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add webui/Main.py .github/workflows/apply-subtitle-preview.yml
+          git commit -m "Add subtitle preview to WebUI"
+          git push origin HEAD:main
