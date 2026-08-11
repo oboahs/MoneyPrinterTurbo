@@ -1,22 +1,17 @@
 name: Apply subtitle preview
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/apply-subtitle-preview.yml
-  issues:
+  pull_request_target:
     types:
       - opened
 
 permissions:
   contents: write
-  issues: write
+  pull-requests: write
 
 jobs:
   apply:
-    if: github.event_name == 'issues' && github.event.issue.title == '[internal] apply subtitle preview'
+    if: github.event.pull_request.title == '[internal] apply subtitle preview'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main
@@ -142,9 +137,6 @@ def _build_subtitle_preview_image(params, preview_text: str):
     stroke_color = _normalize_preview_color(
         getattr(params, "stroke_color", "#000000"), "#000000"
     )
-
-    # 先测量真实可见字形。背景字幕与成片一样考虑 TextClip 的上下 margin，
-    # 避免预览里多行文字看起来比最终视频更拥挤。
     measure_layer = Image.new("RGBA", (clip_width, max(1, clip_height)), (0, 0, 0, 0))
     measure_draw = ImageDraw.Draw(measure_layer)
     text_bbox = measure_draw.multiline_textbbox(
@@ -155,7 +147,6 @@ def _build_subtitle_preview_image(params, preview_text: str):
         align="center",
         stroke_width=stroke_width,
     )
-    visible_width = text_bbox[2] - text_bbox[0]
     visible_height = text_bbox[3] - text_bbox[1]
     if background_color:
         clip_height = max(clip_height, visible_height + 2 * text_clip_margin_y)
@@ -281,7 +272,6 @@ def _render_subtitle_preview(params):
               text = text.replace(button_anchor, preview_block + button_anchor, 1)
               path.write_text(text, encoding="utf-8")
 
-          # 一次性工作流：补丁落地后主动删除自身，main 只保留真实功能代码。
           workflow_path = Path(".github/workflows/apply-subtitle-preview.yml")
           if workflow_path.exists():
               workflow_path.unlink()
@@ -303,8 +293,8 @@ def _render_subtitle_preview(params):
           git commit -m "Add subtitle preview to WebUI"
           git push origin HEAD:main
 
-      - name: Close trigger issue
+      - name: Close and delete trigger PR branch
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh issue close "${{ github.event.issue.number }}" --repo "${{ github.repository }}" --reason completed || true
+        run: gh pr close "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --delete-branch || true
