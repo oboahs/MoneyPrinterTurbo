@@ -1,6 +1,6 @@
 """Unified cross-platform publishing for generated videos.
 
-Upload-Post remains the API provider for TikTok, Instagram and YouTube.  The
+Upload-Post remains the API provider for TikTok, Instagram and YouTube. The
 optional ``social-auto-upload`` adapter handles browser-based publishing to
 Douyin, Kuaishou, Xiaohongshu, Bilibili and WeChat Channels/Tencent.
 """
@@ -27,6 +27,10 @@ class UploadPostService:
     API_BASE = "https://api.upload-post.com"
 
     def __init__(self):
+        self.refresh_config()
+
+    def refresh_config(self) -> None:
+        """Reload mutable provider settings without restarting the application."""
         self.api_key = config.app.get("upload_post_api_key", "")
         self.username = config.app.get("upload_post_username", "")
         self.enabled = bool(config.app.get("upload_post_enabled", False))
@@ -40,15 +44,17 @@ class UploadPostService:
         self.upload_post_auto_upload = bool(
             config.app.get("upload_post_auto_upload", False)
         )
-        self.youtube_privacy_status = config.app.get(
-            "upload_post_youtube_privacy_status", "public"
-        )
+        self.youtube_privacy_status = str(
+            config.app.get("upload_post_youtube_privacy_status", "public") or "public"
+        ).strip().lower()
+        if self.youtube_privacy_status not in {"public", "unlisted", "private"}:
+            self.youtube_privacy_status = "public"
 
-        # task.py already owns a reliable asynchronous publishing queue.  Expose
-        # the union of providers through the same interface so no second task
-        # system is needed.  Only platforms whose provider explicitly enables
-        # auto-upload are included; this prevents enabling one provider from
-        # accidentally auto-publishing through the other.
+        social_auto_upload_service.refresh_config()
+
+        # task.py owns the asynchronous publishing queue. Expose the union of
+        # auto-enabled providers through the same interface so WebUI changes can
+        # take effect immediately without creating a second task system.
         self.auto_upload = bool(
             self.upload_post_auto_upload or social_auto_upload_service.auto_upload
         )
@@ -56,7 +62,8 @@ class UploadPostService:
         if self._is_upload_post_configured() and self.upload_post_auto_upload:
             self.platforms.extend(self.upload_post_platforms)
         if (
-            social_auto_upload_service.is_configured()
+            social_auto_upload_service.enabled
+            and social_auto_upload_service.platforms
             and social_auto_upload_service.auto_upload
         ):
             self.platforms.extend(social_auto_upload_service.platforms)
@@ -65,9 +72,13 @@ class UploadPostService:
         return bool(self.api_key and self.username and self.enabled)
 
     def is_configured(self) -> bool:
+        self.refresh_config()
         return bool(
             self._is_upload_post_configured()
-            or social_auto_upload_service.is_configured()
+            or (
+                social_auto_upload_service.enabled
+                and social_auto_upload_service.platforms
+            )
         )
 
     def upload_video(
@@ -79,6 +90,7 @@ class UploadPostService:
         youtube_extra: Optional[dict] = None,
     ) -> dict:
         """Upload a video through Upload-Post only."""
+        self.refresh_config()
         if not self._is_upload_post_configured():
             logger.warning("Upload-Post is not configured. Skipping API cross-post.")
             return {
@@ -200,6 +212,7 @@ class UploadPostService:
         youtube_extra: Optional[dict] = None,
     ) -> dict:
         """Route requested platforms to the appropriate publishing provider."""
+        self.refresh_config()
         if platforms is None:
             platforms = self.platforms
         requested_platforms = [
@@ -285,6 +298,7 @@ class UploadPostService:
 
     def check_status(self, request_id: str) -> dict:
         """Check the status of an Upload-Post API request."""
+        self.refresh_config()
         try:
             headers = {"Authorization": f"Apikey {self.api_key}"}
             response = requests.get(
