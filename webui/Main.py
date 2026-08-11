@@ -50,6 +50,7 @@ from app.services import task as tm
 from app.services import version_checker
 from app.utils.logging_utils import configure_terminal_logger
 from app.utils import utils
+from webui.subtitle_preview import render_subtitle_preview
 
 st.set_page_config(
     page_title="MoneyPrinterTurbo",
@@ -3813,6 +3814,10 @@ def _render_subtitle_settings(panel, params):
                 )
             ):
                 st.warning(tr("Subtitle Font Does Not Support Text"))
+
+            render_subtitle_preview(
+                params, font_dir, st.session_state.get("ui_language", "")
+            )
 
             if st.button(
                 tr("Restore Default Subtitle Settings"),
