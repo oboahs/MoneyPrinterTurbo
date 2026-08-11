@@ -141,7 +141,7 @@ def main() -> None:
 
     if "custom_position_input" in text:
         raise RuntimeError("legacy custom_position_input key still exists")
-    if text.count("custom_position_slider") != 3:
+    if text.count("custom_position_slider") != 4:
         raise RuntimeError(
             "expected custom_position_slider in restore, reset, and render paths"
         )
