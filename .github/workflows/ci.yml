@@ -46,7 +46,7 @@ jobs:
           assert "render_nas_hardware_acceleration_settings" in main
           assert '"NAS 硬件加速"' in main
           assert "custom_position_input" not in main
-          assert main.count("custom_position_slider") == 3
+          assert main.count("custom_position_slider") == 4
           assert not Path("webui/pages/99_NAS硬件加速.py").exists()
           PY
 
