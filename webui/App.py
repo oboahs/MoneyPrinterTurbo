@@ -3,6 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from app.services.social_auto_upload import social_auto_upload_service
+from webui.social_login_panel import render_social_login_panel
 
 
 st.set_page_config(
@@ -113,5 +114,11 @@ if page.title == social_page.title:
             "当前是 Docker/NAS 运行模式，浏览器自动发布环境尚未完整就绪。"
             " 请使用本仓库 Dockerfile 重新构建镜像，例如 `docker compose up -d --build`。"
         )
+
+    # First-time account setup must be available before the legacy status section.
+    # On local Windows this panel can launch an interactive terminal and headed
+    # Chromium directly, so the user can scan the platform QR code without
+    # manually constructing commands.
+    render_social_login_panel()
 
 page.run()
