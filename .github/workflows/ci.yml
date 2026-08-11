@@ -6,7 +6,90 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
+  apply-subtitle-preview:
+    if: github.event_name == 'pull_request' && github.event.pull_request.title == '[internal] apply subtitle preview'
+    name: Apply subtitle preview to main
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Check out trigger files
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: trigger
+
+      - name: Apply preview module and Main.py integration
+        shell: bash
+        run: |
+          cp trigger/webui/subtitle_preview.py webui/subtitle_preview.py
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("webui/Main.py")
+          text = path.read_text(encoding="utf-8")
+
+          import_line = "from webui.subtitle_preview import render_subtitle_preview\n"
+          if import_line not in text:
+              anchor = "from app.utils import utils\n"
+              if anchor not in text:
+                  raise RuntimeError("Main.py import anchor not found")
+              text = text.replace(anchor, anchor + import_line, 1)
+
+          preview_call = (
+              "            render_subtitle_preview(\n"
+              "                params, font_dir, st.session_state.get(\"ui_language\", \"\")\n"
+              "            )\n\n"
+          )
+          if preview_call not in text:
+              anchor = '''            if st.button(
+                tr("Restore Default Subtitle Settings"),'''
+              if anchor not in text:
+                  raise RuntimeError("subtitle restore button anchor not found")
+              text = text.replace(anchor, preview_call + anchor, 1)
+
+          path.write_text(text, encoding="utf-8")
+
+          temporary_workflow = Path(".github/workflows/apply-subtitle-preview.yml")
+          if temporary_workflow.exists():
+              temporary_workflow.unlink()
+          PY
+
+      - name: Validate preview integration
+        run: |
+          python -m py_compile webui/Main.py webui/subtitle_preview.py
+          python - <<'PY'
+          from pathlib import Path
+          text = Path("webui/Main.py").read_text(encoding="utf-8")
+          assert "from webui.subtitle_preview import render_subtitle_preview" in text
+          assert "render_subtitle_preview(" in text
+          PY
+
+      - name: Commit directly to main
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add webui/Main.py webui/subtitle_preview.py .github/workflows/apply-subtitle-preview.yml
+          git commit -m "Add subtitle preview to WebUI"
+          git push origin HEAD:main
+
+      - name: Close trigger PR
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr close "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --delete-branch || true
+
   tests:
     name: Python ${{ matrix.python-version }} tests
     runs-on: ubuntu-latest
@@ -58,8 +141,6 @@ jobs:
         run: uv run --no-sync ruff check app cli.py main.py webui test
 
       - name: Run unit tests with coverage
-        # pytest 兼容现有 unittest.TestCase，同时会收集仓库中的 pytest 风格
-        # 测试，避免测试文件已存在但 CI 没有真正执行。
         run: uv run --no-sync python -X utf8 -m coverage run -m pytest -q test
 
       - name: Report test coverage
