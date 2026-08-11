@@ -1,7 +1,7 @@
 """Local browser-based social publishing via dreammis/social-auto-upload.
 
 This adapter intentionally talks to the upstream ``sau`` CLI instead of copying
-platform automation code into MoneyPrinterTurbo.  The upstream project changes
+platform automation code into MoneyPrinterTurbo. The upstream project changes
 selectors and anti-bot workarounds frequently; keeping that implementation
 separate lets us pin/update it in the Docker image without coupling the video
 pipeline to individual social sites.
@@ -29,16 +29,23 @@ SUPPORTED_PLATFORMS = {
 }
 
 
-def _normalize_list(value) -> list[str]:
+def _normalize_platforms(value) -> list[str]:
     if isinstance(value, str):
         value = value.split(",")
-    return [str(item).strip().lower() for item in (value or []) if str(item).strip()]
+    return [
+        str(item).strip().lower()
+        for item in (value or [])
+        if str(item).strip()
+    ]
 
 
 def _normalize_tags(value) -> list[str]:
+    if isinstance(value, str):
+        value = value.split(",")
+
     tags = []
-    for tag in _normalize_list(value):
-        cleaned = tag.lstrip("#").strip()
+    for tag in value or []:
+        cleaned = str(tag).strip().lstrip("#").strip()
         if cleaned:
             tags.append(cleaned)
     return tags
@@ -59,7 +66,7 @@ class SocialAutoUploadService:
         self.auto_upload = bool(
             config.app.get("social_auto_upload_auto_upload", False)
         )
-        configured_platforms = _normalize_list(
+        configured_platforms = _normalize_platforms(
             config.app.get("social_auto_upload_platforms", [])
         )
         self.platforms = [
