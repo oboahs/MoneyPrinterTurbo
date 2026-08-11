@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import streamlit as st
 
+from app.services.social_auto_upload import social_auto_upload_service
+
 
 st.set_page_config(
     page_title="MoneyPrinterTurbo",
@@ -96,5 +98,20 @@ selected = st.segmented_control(
 if selected and selected != page.title:
     target_page = social_page if selected == social_page.title else video_page
     st.switch_page(target_page)
+
+if page.title == social_page.title:
+    runtime = social_auto_upload_service.runtime_status()
+    if not runtime.get("ready") and runtime.get("runtime_kind") == "local":
+        st.info(
+            "当前是本机运行模式，浏览器自动发布环境尚未安装完整。"
+            " Windows 请在项目根目录运行 `setup-social-publishing.bat`；"
+            " macOS/Linux 运行 `./setup-social-publishing.sh`。"
+            " 安装完成后刷新此页面即可，不需要重建 Docker。"
+        )
+    elif not runtime.get("ready") and runtime.get("runtime_kind") == "docker":
+        st.info(
+            "当前是 Docker/NAS 运行模式，浏览器自动发布环境尚未完整就绪。"
+            " 请使用本仓库 Dockerfile 重新构建镜像，例如 `docker compose up -d --build`。"
+        )
 
 page.run()
