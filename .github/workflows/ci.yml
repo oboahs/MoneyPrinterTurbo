@@ -52,8 +52,10 @@ jobs:
               "            )\n\n"
           )
           if preview_call not in text:
-              anchor = '''            if st.button(
-                tr("Restore Default Subtitle Settings"),'''
+              anchor = (
+                  "            if st.button(\n"
+                  "                tr(\"Restore Default Subtitle Settings\"),"
+              )
               if anchor not in text:
                   raise RuntimeError("subtitle restore button anchor not found")
               text = text.replace(anchor, preview_call + anchor, 1)
