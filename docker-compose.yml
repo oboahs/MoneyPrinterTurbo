@@ -1,5 +1,8 @@
 x-common-volumes: &common-volumes
   - ./:/MoneyPrinterTurbo
+  # Persist social-auto-upload login state outside the image so rebuilding or
+  # upgrading MoneyPrinterTurbo does not require logging into every platform again.
+  - ./storage/social-auto-upload/cookies:/opt/social-auto-upload/cookies
 
 services:
   webui:
