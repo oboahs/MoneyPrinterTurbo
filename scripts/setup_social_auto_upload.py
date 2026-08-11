@@ -33,6 +33,12 @@ def venv_sau() -> Path:
     return VENV_DIR / "bin" / "sau"
 
 
+def venv_patchright() -> Path:
+    if os.name == "nt":
+        return VENV_DIR / "Scripts" / "patchright.exe"
+    return VENV_DIR / "bin" / "patchright"
+
+
 def browser_ready() -> bool:
     if not BROWSER_DIR.is_dir():
         return False
@@ -48,6 +54,7 @@ def runtime_ready() -> bool:
         and (SOURCE_DIR / "cookies").is_dir()
         and venv_python().is_file()
         and venv_sau().is_file()
+        and venv_patchright().is_file()
         and browser_ready()
     )
 
@@ -116,7 +123,7 @@ def ensure_browser() -> None:
     env = {**os.environ, "PLAYWRIGHT_BROWSERS_PATH": str(BROWSER_DIR)}
     if browser_ready():
         return
-    run([str(venv_python()), "-m", "patchright", "install", "chromium"], env=env)
+    run([str(venv_patchright()), "install", "chromium"], env=env)
 
 
 def main() -> int:
