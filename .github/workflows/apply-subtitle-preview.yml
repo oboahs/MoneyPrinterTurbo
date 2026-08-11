@@ -6,12 +6,17 @@ on:
       - main
     paths:
       - .github/workflows/apply-subtitle-preview.yml
+  issues:
+    types:
+      - opened
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
   apply:
+    if: github.event_name == 'issues' && github.event.issue.title == '[internal] apply subtitle preview'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main
@@ -61,8 +66,8 @@ def _build_subtitle_preview_image(params, preview_text: str):
     使用最终视频的真实分辨率和字幕计算规则生成静态预览帧。
 
     预览不会参与成片，只用于让用户在生成前确认字幕字号、换行和垂直位置。
-    位置、最大宽度、背景尺寸和自定义位置约束都与 video.generate_video 中的
-    字幕渲染保持一致；页面展示时再由 Streamlit 等比缩小。
+    位置、最大宽度、背景尺寸和自定义位置约束与最终视频字幕渲染保持一致；
+    页面展示时再由 Streamlit 等比缩小。
     """
     try:
         aspect = VideoAspect(params.video_aspect)
@@ -70,7 +75,6 @@ def _build_subtitle_preview_image(params, preview_text: str):
         aspect = VideoAspect.portrait
     video_width, video_height = aspect.to_resolution()
 
-    # 使用中性深灰背景和轻微网格，避免黑/白字幕在纯色底图上难以判断。
     image = Image.new("RGB", (video_width, video_height), (38, 42, 48))
     canvas = ImageDraw.Draw(image)
     grid_step = max(80, int(min(video_width, video_height) * 0.08))
@@ -78,8 +82,6 @@ def _build_subtitle_preview_image(params, preview_text: str):
         canvas.line((x, 0, x, video_height), fill=(48, 53, 60), width=1)
     for y in range(0, video_height, grid_step):
         canvas.line((0, y, video_width, y), fill=(48, 53, 60), width=1)
-
-    # 5% / 50% / 95% 参考线对应现有 top / center / bottom 的关键位置。
     for ratio in (0.05, 0.5, 0.95):
         y = int(round(video_height * ratio))
         canvas.line((0, y, video_width, y), fill=(82, 89, 99), width=2)
@@ -109,7 +111,6 @@ def _build_subtitle_preview_image(params, preview_text: str):
     padding_ratio = 0.4 if rounded_background else 0.6
     pad_x = int(font_size * padding_ratio) if background_color else 0
     text_max_width = max(1, int(max_width) - 2 * pad_x)
-
     wrapped_text, text_height = video.wrap_text(
         str(preview_text).strip(),
         max_width=text_max_width,
@@ -119,6 +120,7 @@ def _build_subtitle_preview_image(params, preview_text: str):
     interline = int(font_size * 0.25)
     line_count = wrapped_text.count("\n") + 1
     vertical_padding = int(font_size * 0.35)
+    text_clip_margin_y = max(int(font_size * 0.3), int(stroke_width * 2))
     clip_height = int(text_height + vertical_padding + interline * line_count)
 
     if rounded_background:
@@ -133,6 +135,30 @@ def _build_subtitle_preview_image(params, preview_text: str):
         clip_width = max(1, min(int(max_width), measured_text_width + 2 * pad_x))
     else:
         clip_width = int(max_width)
+
+    text_color = _normalize_preview_color(
+        getattr(params, "text_fore_color", "#FFFFFF"), "#FFFFFF"
+    )
+    stroke_color = _normalize_preview_color(
+        getattr(params, "stroke_color", "#000000"), "#000000"
+    )
+
+    # 先测量真实可见字形。背景字幕与成片一样考虑 TextClip 的上下 margin，
+    # 避免预览里多行文字看起来比最终视频更拥挤。
+    measure_layer = Image.new("RGBA", (clip_width, max(1, clip_height)), (0, 0, 0, 0))
+    measure_draw = ImageDraw.Draw(measure_layer)
+    text_bbox = measure_draw.multiline_textbbox(
+        (0, 0),
+        wrapped_text,
+        font=font,
+        spacing=interline,
+        align="center",
+        stroke_width=stroke_width,
+    )
+    visible_width = text_bbox[2] - text_bbox[0]
+    visible_height = text_bbox[3] - text_bbox[1]
+    if background_color:
+        clip_height = max(clip_height, visible_height + 2 * text_clip_margin_y)
 
     subtitle_layer = Image.new("RGBA", (clip_width, clip_height), (0, 0, 0, 0))
     subtitle_draw = ImageDraw.Draw(subtitle_layer)
@@ -149,15 +175,9 @@ def _build_subtitle_preview_image(params, preview_text: str):
         else:
             subtitle_draw.rectangle(
                 (0, 0, clip_width - 1, clip_height - 1),
-                fill=_normalize_preview_color(fill),
+                fill=fill,
             )
 
-    text_color = _normalize_preview_color(
-        getattr(params, "text_fore_color", "#FFFFFF"), "#FFFFFF"
-    )
-    stroke_color = _normalize_preview_color(
-        getattr(params, "stroke_color", "#000000"), "#000000"
-    )
     text_bbox = subtitle_draw.multiline_textbbox(
         (0, 0),
         wrapped_text,
@@ -203,12 +223,21 @@ def _build_subtitle_preview_image(params, preview_text: str):
 
 def _render_subtitle_preview(params):
     """在字幕设置区域展示与当前参数联动的静态预览。"""
-    st.markdown(
-        f"**{_subtitle_preview_ui_text('字幕预览', 'Subtitle Preview')}**"
-    )
-    default_text = _subtitle_preview_ui_text(
-        "这是一段字幕预览文字",
-        "This is a subtitle preview",
+    st.divider()
+    st.markdown(f"**{_subtitle_preview_ui_text('字幕预览', 'Subtitle Preview')}**")
+
+    source_text = re.sub(
+        r"\s+",
+        " ",
+        str(getattr(params, "video_script", "") or getattr(params, "video_subject", "")),
+    ).strip()
+    default_text = (
+        source_text[:80]
+        if source_text
+        else _subtitle_preview_ui_text(
+            "这是一段字幕预览文字",
+            "This is a subtitle preview",
+        )
     )
     st.session_state.setdefault("subtitle_preview_text_input", default_text)
     preview_text = st.text_input(
@@ -250,10 +279,9 @@ def _render_subtitle_preview(params):
               if button_anchor not in text:
                   raise RuntimeError("restore subtitle settings button anchor not found")
               text = text.replace(button_anchor, preview_block + button_anchor, 1)
-
               path.write_text(text, encoding="utf-8")
 
-          # 这个工作流只用于一次性把补丁落到 main。完成后从仓库删除，避免留下维护负担。
+          # 一次性工作流：补丁落地后主动删除自身，main 只保留真实功能代码。
           workflow_path = Path(".github/workflows/apply-subtitle-preview.yml")
           if workflow_path.exists():
               workflow_path.unlink()
@@ -265,12 +293,18 @@ def _render_subtitle_preview(params):
       - name: Commit directly to main
         shell: bash
         run: |
-          if git diff --quiet && git diff --cached --quiet; then
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add webui/Main.py .github/workflows/apply-subtitle-preview.yml
           git commit -m "Add subtitle preview to WebUI"
           git push origin HEAD:main
+
+      - name: Close trigger issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue close "${{ github.event.issue.number }}" --repo "${{ github.repository }}" --reason completed || true
