@@ -51,6 +51,7 @@ from app.services import version_checker
 from app.utils.logging_utils import configure_terminal_logger
 from app.utils import utils
 from webui.subtitle_preview import render_subtitle_preview
+from webui.nas_hardware_acceleration import render_nas_hardware_acceleration_settings
 
 st.set_page_config(
     page_title="MoneyPrinterTurbo",
@@ -1053,7 +1054,7 @@ def _apply_pending_task_restore():
         "subtitle_position_select", params.get("subtitle_position") or "bottom"
     )
     custom_position = min(100.0, max(0.0, float(params.get("custom_position", 70.0))))
-    st.session_state["custom_position_input"] = str(custom_position)
+    st.session_state["custom_position_slider"] = custom_position
     st.session_state["font_color_picker"] = params.get("text_fore_color") or "#FFFFFF"
     st.session_state["font_size_slider"] = min(
         100, max(30, int(params.get("font_size", 60)))
@@ -1678,7 +1679,7 @@ def reset_subtitle_settings():
     st.session_state["subtitle_enabled_checkbox"] = defaults["subtitle_enabled"]
     _set_stable_widget_value("font_name_select", defaults["font_name"])
     _set_stable_widget_value("subtitle_position_select", defaults["subtitle_position"])
-    st.session_state["custom_position_input"] = str(defaults["custom_position"])
+    st.session_state["custom_position_slider"] = float(defaults["custom_position"])
     st.session_state["font_color_picker"] = defaults["text_fore_color"]
     st.session_state["font_size_slider"] = defaults["font_size"]
     st.session_state["stroke_color_picker"] = defaults["stroke_color"]
@@ -1939,12 +1940,14 @@ def _render_settings_dialog():
             right_config_panel,
             cache_config_panel,
             left_config_panel,
+            nas_hardware_panel,
         ) = st.tabs(
             [
                 tr("LLM Settings Tab"),
                 tr("Material API Tab"),
                 tr("Cache Management Tab"),
                 tr("Interface Settings Tab"),
+                "NAS 硬件加速",
             ]
         )
 
@@ -1958,6 +1961,9 @@ def _render_settings_dialog():
             _set_runtime_config("ui", "hide_log", hide_log)
 
         _render_cache_management_settings(cache_config_panel)
+
+        with nas_hardware_panel:
+            render_nas_hardware_acceleration_settings()
 
         # 中间面板 - LLM 设置
 
@@ -3646,24 +3652,26 @@ def _render_subtitle_settings(panel, params):
                 saved_custom_position = config.ui.get(
                     "custom_position", DEFAULT_SUBTITLE_SETTINGS["custom_position"]
                 )
+                try:
+                    saved_custom_position = float(saved_custom_position)
+                except (TypeError, ValueError):
+                    saved_custom_position = float(
+                        DEFAULT_SUBTITLE_SETTINGS["custom_position"]
+                    )
+                saved_custom_position = min(100.0, max(0.0, saved_custom_position))
                 st.session_state.setdefault(
-                    "custom_position_input", str(saved_custom_position)
+                    "custom_position_slider", saved_custom_position
                 )
-                custom_position = st.text_input(
+                params.custom_position = st.slider(
                     tr("Custom Position (% from top)"),
-                    key="custom_position_input",
+                    min_value=0.0,
+                    max_value=100.0,
+                    step=1.0,
+                    format="%.0f%%",
+                    key="custom_position_slider",
                     disabled=subtitle_settings_disabled,
                 )
-                try:
-                    params.custom_position = float(custom_position)
-                    if params.custom_position < 0 or params.custom_position > 100:
-                        st.error(tr("Please enter a value between 0 and 100"))
-                    else:
-                        _set_runtime_config(
-                            "ui", "custom_position", params.custom_position
-                        )
-                except ValueError:
-                    st.error(tr("Please enter a valid number"))
+                _set_runtime_config("ui", "custom_position", params.custom_position)
 
             # 非中文语言的颜色标签通常比中文更长。为颜色选择器保留适当宽度，
             # 避免标签换行，同时仍给字号滑块保留足够的可操作空间。
