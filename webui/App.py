@@ -102,23 +102,23 @@ if selected and selected != page.title:
 
 if page.title == social_page.title:
     runtime = social_auto_upload_service.runtime_status()
-    if not runtime.get("ready") and runtime.get("runtime_kind") == "local":
-        st.info(
-            "当前是本机运行模式，浏览器自动发布环境尚未安装完整。"
-            " Windows 请在项目根目录运行 `setup-social-publishing.bat`；"
-            " macOS/Linux 运行 `./setup-social-publishing.sh`。"
-            " 安装完成后刷新此页面即可，不需要重建 Docker。"
-        )
-    elif not runtime.get("ready") and runtime.get("runtime_kind") == "docker":
-        st.info(
-            "当前是 Docker/NAS 运行模式，浏览器自动发布环境尚未完整就绪。"
-            " 请使用本仓库 Dockerfile 重新构建镜像，例如 `docker compose up -d --build`。"
-        )
+    if not runtime.get("ready"):
+        setup_command = runtime.get("setup_command") or "-"
+        if runtime.get("runtime_kind") == "local":
+            st.info(
+                "当前是本机验证模式，浏览器自动发布环境尚未完整就绪。"
+                f"请在项目根目录运行 `{setup_command}`；安装完成后刷新页面即可。"
+                "本机安装与 Docker 镜像互相独立，不需要为了本地验证重建 Docker。"
+            )
+        else:
+            st.info(
+                "当前是 Docker/NAS 运行模式，浏览器自动发布环境尚未完整就绪。"
+                f"请重新构建当前仓库镜像，例如 `{setup_command}`。"
+            )
 
-    # First-time account setup must be available before the legacy status section.
-    # On local Windows this panel can launch an interactive terminal and headed
-    # Chromium directly, so the user can scan the platform QR code without
-    # manually constructing commands.
+    # First-time account setup is shown before the legacy status section. Local
+    # Windows/macOS can launch the visible login flow directly; Docker/NAS shows
+    # the equivalent interactive docker exec command for terminal QR login.
     render_social_login_panel()
 
 page.run()
