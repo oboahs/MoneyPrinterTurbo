@@ -1,8 +1,8 @@
 x-common-volumes: &common-volumes
   - ./:/MoneyPrinterTurbo
-  # Persist social-auto-upload login state outside the image so rebuilding or
-  # upgrading MoneyPrinterTurbo does not require logging into every platform again.
-  - ./storage/social-auto-upload/cookies:/opt/social-auto-upload/cookies
+  # Reuse the same account cookies created by local Windows/macOS validation.
+  # The uploader source itself stays local-only and is never mounted into /opt.
+  - ./storage/social-auto-upload/runtime/cookies:/opt/social-auto-upload/cookies
 
 services:
   webui:
@@ -13,10 +13,6 @@ services:
     ports:
       - "127.0.0.1:8501:8501"
     command: [ "streamlit", "run", "./webui/App.py", "--server.address=0.0.0.0", "--server.port=8501", "--browser.serverAddress=127.0.0.1", "--server.enableCORS=True", "--browser.gatherUsageStats=False", "--client.toolbarMode=minimal", "--logger.hideWelcomeMessage=True", "--server.showEmailPrompt=False" ]
-    devices:
-      - /dev/dri:/dev/dri
-    environment:
-      - LIBVA_DRIVER_NAME=iHD
     volumes: *common-volumes
     restart: always
   api:
@@ -27,9 +23,5 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     command: [ "python3", "main.py" ]
-    devices:
-      - /dev/dri:/dev/dri
-    environment:
-      - LIBVA_DRIVER_NAME=iHD
     volumes: *common-volumes
     restart: always
