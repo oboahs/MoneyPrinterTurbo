@@ -9,6 +9,7 @@ social sites.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -27,6 +28,7 @@ SUPPORTED_PLATFORMS = {
     "bilibili",
     "tencent",
 }
+SOCIAL_AUTO_UPLOAD_REF = "008e4ff66abdf48eb1f4b999272ef979711af436"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_RUNTIME_ROOT = PROJECT_ROOT / "storage" / "social-auto-upload"
@@ -77,6 +79,17 @@ def _local_sau_command() -> Path:
     return LOCAL_VENV_DIR / "bin" / "sau"
 
 
+def _read_runtime_marker(workdir: Path | None) -> dict:
+    if not workdir:
+        return {}
+    marker_path = workdir / ".mpt-runtime.json"
+    try:
+        value = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 class SocialAutoUploadService:
     """Invoke the pinned social-auto-upload CLI for one platform at a time."""
 
@@ -85,7 +98,10 @@ class SocialAutoUploadService:
 
     @staticmethod
     def _using_docker_runtime() -> bool:
-        return DOCKER_SOURCE_DIR.is_dir()
+        # Do not infer Docker from the existence of /opt/social-auto-upload. A
+        # developer can have similarly named folders on Linux/macOS, while the
+        # project already has a tested container detector used elsewhere.
+        return bool(config.is_running_in_container())
 
     def _default_workdir(self) -> str:
         if self._using_docker_runtime():
@@ -197,29 +213,42 @@ class SocialAutoUploadService:
         workdir = Path(self.workdir) if self.workdir else None
         cookies_dir = workdir / "cookies" if workdir else None
         browser_root = self._browser_root()
-        browser_ready = False
-        if browser_root.is_dir():
-            try:
-                browser_ready = any(browser_root.iterdir())
-            except OSError:
-                browser_ready = False
+        marker = _read_runtime_marker(workdir)
+        browser_executable_value = str(marker.get("browser_executable") or "").strip()
+        browser_executable = Path(browser_executable_value) if browser_executable_value else None
+        marker_ref = str(marker.get("upstream_ref") or "").strip()
+        browser_ready = bool(browser_executable and browser_executable.is_file())
+        workdir_ready = bool(workdir and workdir.is_dir())
+        cookies_ready = bool(cookies_dir and cookies_dir.is_dir())
+        runtime_version_ready = marker_ref == SOCIAL_AUTO_UPLOAD_REF
 
         using_docker = self._using_docker_runtime()
+        ready = bool(
+            command
+            and workdir_ready
+            and cookies_ready
+            and browser_ready
+            and runtime_version_ready
+        )
         return {
-            "ready": bool(command and workdir and workdir.is_dir() and browser_ready),
+            "ready": ready,
             "runtime_kind": "docker" if using_docker else "local",
             "command": command or "",
             "configured_command": self.command,
             "workdir": str(workdir) if workdir else "",
-            "workdir_ready": bool(workdir and workdir.is_dir()),
+            "workdir_ready": workdir_ready,
             "cookies_dir": str(cookies_dir) if cookies_dir else "",
-            "cookies_dir_ready": bool(cookies_dir and cookies_dir.is_dir()),
+            "cookies_dir_ready": cookies_ready,
             "browser_root": str(browser_root),
             "browser_ready": browser_ready,
+            "browser_executable": str(browser_executable) if browser_executable else "",
+            "runtime_ref": marker_ref,
+            "expected_runtime_ref": SOCIAL_AUTO_UPLOAD_REF,
+            "runtime_version_ready": runtime_version_ready,
             "setup_command": (
                 "setup-social-publishing.bat"
                 if os.name == "nt" and not using_docker
-                else "./setup-social-publishing.sh"
+                else "sh setup-social-publishing.sh"
                 if not using_docker
                 else "docker compose up -d --build"
             ),
