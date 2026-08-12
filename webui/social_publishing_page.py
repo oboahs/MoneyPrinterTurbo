@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 
 import streamlit as st
@@ -163,8 +162,8 @@ def _render_browser_provider(snapshot: dict) -> None:
     st.subheader(_t("国内平台 · 浏览器自动发布", "Browser-based publishing"))
     st.caption(
         _t(
-            "抖音、小红书、快手、B站和视频号使用 social-auto-upload + Patchright 浏览器自动化。账号登录态保存在 NAS 的持久化 cookies 目录中。",
-            "Douyin, Xiaohongshu, Kuaishou, Bilibili, and WeChat Channels use social-auto-upload with Patchright browser automation. Login sessions are persisted in the NAS cookies directory.",
+            "抖音、小红书、快手、B站和视频号使用 social-auto-upload + Patchright 浏览器自动化。账号登录态保存在当前运行环境的持久化 Cookie 目录中。",
+            "Douyin, Xiaohongshu, Kuaishou, Bilibili, and WeChat Channels use social-auto-upload with Patchright browser automation. Login sessions are stored in the persistent cookie directory for the current runtime.",
         )
     )
 
@@ -270,6 +269,7 @@ def _render_browser_provider(snapshot: dict) -> None:
     _set_app_config("social_auto_upload_description", description)
 
     with st.expander(_t("高级设置", "Advanced settings"), expanded=False):
+        runtime = social_auto_upload_service.runtime_status()
         advanced_cols = st.columns(3)
         bilibili_tid = advanced_cols[0].number_input(
             "Bilibili TID",
@@ -303,19 +303,28 @@ def _render_browser_provider(snapshot: dict) -> None:
             _t("CLI 命令", "CLI command"),
             value=str(snapshot.get("social_auto_upload_command", "sau") or "sau"),
             key="social_publish_command",
+            help=_t(
+                "通常保持 sau 即可，本机会自动解析独立 venv，Docker 会解析镜像内 CLI。",
+                "Normally keep this as sau. Local mode resolves the isolated venv and Docker resolves the image CLI automatically.",
+            ),
             disabled=not enabled,
         ).strip()
-        workdir = st.text_input(
-            _t("运行目录", "Working directory"),
-            value=str(
-                snapshot.get("social_auto_upload_workdir", "/opt/social-auto-upload")
-                or "/opt/social-auto-upload"
-            ),
+        raw_workdir = str(snapshot.get("social_auto_upload_workdir", "") or "").strip()
+        if raw_workdir.replace("\\", "/").rstrip("/") == "/opt/social-auto-upload":
+            raw_workdir = ""
+        workdir_override = st.text_input(
+            _t("自定义运行目录（留空 = 自动）", "Custom working directory (blank = auto)"),
+            value=raw_workdir,
+            placeholder=str(runtime.get("workdir") or ""),
             key="social_publish_workdir",
+            help=_t(
+                "建议留空。程序会在 Windows/macOS 本机与 Docker/NAS 之间自动选择正确目录。只有使用自定义 social-auto-upload 安装时才填写。",
+                "Leave blank in normal use. The app automatically selects the correct Windows/macOS or Docker/NAS directory. Only set this for a custom social-auto-upload installation.",
+            ),
             disabled=not enabled,
         ).strip()
         _set_app_config("social_auto_upload_command", command or "sau")
-        _set_app_config("social_auto_upload_workdir", workdir or "/opt/social-auto-upload")
+        _set_app_config("social_auto_upload_workdir", workdir_override)
 
 
 def _render_upload_post_provider(snapshot: dict) -> None:
@@ -352,8 +361,8 @@ def _render_upload_post_provider(snapshot: dict) -> None:
     api_key = credential_cols[1].text_input(
         "Upload-Post API Key",
         value=str(snapshot.get("upload_post_api_key", "") or ""),
-        type="password",
         key="social_publish_upload_post_api_key",
+        type="password",
         disabled=not enabled,
     ).strip()
     _set_app_config("upload_post_username", username)
@@ -420,24 +429,34 @@ def _render_runtime_and_accounts(snapshot: dict) -> None:
     )
 
     if not runtime.get("ready"):
-        st.warning(
-            _t(
-                "浏览器发布运行环境未完全就绪。若刚更新代码，请重新构建 Docker 镜像，而不是只重启容器。",
-                "The browser publishing runtime is not fully ready. If you just updated the code, rebuild the Docker image instead of only restarting the container.",
+        setup_command = runtime.get("setup_command") or "-"
+        if runtime.get("runtime_kind") == "local":
+            warning = _t(
+                f"本机浏览器发布运行环境未完全就绪。请运行 `{setup_command}`，完成后刷新页面。",
+                f"The local browser publishing runtime is not fully ready. Run `{setup_command}` and refresh the page.",
             )
+        else:
+            warning = _t(
+                f"Docker/NAS 浏览器发布运行环境未完全就绪。请重新构建镜像，例如 `{setup_command}`。",
+                f"The Docker/NAS browser publishing runtime is not fully ready. Rebuild the image, for example `{setup_command}`.",
+            )
+        st.warning(warning)
+
+    with st.expander(_t("运行环境详情", "Runtime details"), expanded=not runtime.get("ready")):
+        st.code(
+            "\n".join(
+                [
+                    f"mode: {runtime.get('runtime_kind') or '-'}",
+                    f"command: {runtime.get('command') or runtime.get('configured_command') or '-'}",
+                    f"workdir: {runtime.get('workdir') or '-'}",
+                    f"cookies: {runtime.get('cookies_dir') or '-'}",
+                    f"browser root: {runtime.get('browser_root') or '-'}",
+                    f"browser executable: {runtime.get('browser_executable') or '-'}",
+                    f"runtime ref: {runtime.get('runtime_ref') or '-'}",
+                ]
+            ),
+            language="text",
         )
-        with st.expander(_t("运行环境详情", "Runtime details")):
-            st.code(
-                "\n".join(
-                    [
-                        f"command: {runtime.get('command') or runtime.get('configured_command') or '-'}",
-                        f"workdir: {runtime.get('workdir') or '-'}",
-                        f"cookies: {runtime.get('cookies_dir') or '-'}",
-                        f"browser: {runtime.get('browser_root') or '-'}",
-                    ]
-                ),
-                language="text",
-            )
 
     selected_platforms = _normalize_list(
         snapshot.get("social_auto_upload_platforms", [])
@@ -452,8 +471,8 @@ def _render_runtime_and_accounts(snapshot: dict) -> None:
 
     st.caption(
         _t(
-            "“检查登录”只验证当前 Cookie 是否有效，不会上传任何内容。首次登录或 Cookie 失效时，需要在 NAS 终端中执行下方登录命令并扫码。",
-            "Check login only validates the current cookie and does not upload anything. For first-time login or an expired cookie, run the command below in the NAS terminal and scan the QR code.",
+            "账号首次登录/重新登录请使用页面上方的“账号登录与扫码”区域；这里的“检查登录”只验证 Cookie，不上传内容。",
+            "Use the Account login & QR section above for first-time or renewed login. Check login here only validates the cookie and does not upload content.",
         )
     )
 
@@ -481,7 +500,7 @@ def _render_runtime_and_accounts(snapshot: dict) -> None:
                 _t("检查登录", "Check login"),
                 key=f"social_publish_check_{platform}",
                 use_container_width=True,
-                disabled=not bool(account) or not runtime.get("command"),
+                disabled=not bool(account) or not runtime.get("ready"),
             ):
                 with st.spinner(_t("正在检查登录状态…", "Checking login…")):
                     result = social_auto_upload_service.check_account(platform, account)
@@ -493,12 +512,6 @@ def _render_runtime_and_accounts(snapshot: dict) -> None:
                 st.caption(
                     _t("检查结果：", "Check result: ")
                     + _short(cached_status.get("error") or cached_status.get("message"), 240)
-                )
-
-            if account:
-                st.code(
-                    f"docker exec -it moneyprinterturbo-webui sau {platform} login --account {account}",
-                    language="bash",
                 )
 
 
