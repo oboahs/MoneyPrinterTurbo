@@ -1,0 +1,11 @@
+services:
+  webui:
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - LIBVA_DRIVER_NAME=iHD
+  api:
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - LIBVA_DRIVER_NAME=iHD
