@@ -5,16 +5,26 @@ CURRENT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$CURRENT_DIR"
 
 PROJECT_PYTHON="$CURRENT_DIR/.venv/bin/python"
+if command -v uv >/dev/null 2>&1; then
+  echo "***** Syncing MoneyPrinterTurbo from uv.lock... *****"
+  uv sync --frozen
+elif [ ! -x "$PROJECT_PYTHON" ]; then
+  echo "[ERROR] uv is required for the first local setup but was not found."
+  echo "Install uv from: https://docs.astral.sh/uv/getting-started/installation/"
+  exit 1
+else
+  echo "***** WARNING: uv was not found; using the existing .venv. *****"
+fi
+
 if [ ! -x "$PROJECT_PYTHON" ]; then
-  echo "[ERROR] MoneyPrinterTurbo project environment was not found."
-  echo "Run ./webui.sh once first so the .venv environment is created."
+  echo "[ERROR] Project Python was not created: $PROJECT_PYTHON"
   exit 1
 fi
 
 echo "============================================================"
 echo "MoneyPrinterTurbo - Local Social Publishing Runtime Setup"
 echo "============================================================"
-echo "This installs a separate uploader environment under:"
+echo "This installs a separate uploader runtime under:"
 echo "  storage/social-auto-upload/"
 echo "It does NOT modify the MoneyPrinterTurbo project environment."
 echo
@@ -23,4 +33,4 @@ echo
 
 echo
 echo "[OK] Local social publishing runtime is ready."
-echo "Restart ./webui.sh, then open Social Publishing > Accounts and Runtime."
+echo "Restart webui.sh, then open Social Publishing."
