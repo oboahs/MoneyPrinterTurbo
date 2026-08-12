@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import sys
 from collections.abc import Mapping
 
 import streamlit as st
@@ -42,8 +43,10 @@ def _save_accounts(accounts: dict[str, str]) -> None:
 def _login_args(runtime: dict, platform: str, account: str) -> list[str]:
     command = str(runtime.get("command") or "sau")
     args = [command, platform, "login", "--account", account]
-    if platform != "bilibili":
-        # First-time login must be visible locally so the user can scan the QR code.
+    if runtime.get("runtime_kind") == "local" and platform != "bilibili":
+        # Local validation should open the browser so Windows/macOS users can scan
+        # the QR directly. Docker/NAS stays headless and prints/saves the QR from
+        # an interactive docker exec terminal instead.
         args.append("--headed")
     return args
 
@@ -69,57 +72,111 @@ def _display_command(runtime: dict, platform: str, account: str) -> str:
     return shlex.join(args)
 
 
-def _launch_windows_login(runtime: dict, platform: str, account: str) -> dict:
-    if os.name != "nt" or runtime.get("runtime_kind") != "local":
-        return {
-            "success": False,
-            "error": "当前运行环境不支持从 WebUI 直接弹出本机登录窗口，请使用下方终端命令。",
-        }
-
+def _validate_local_login_runtime(runtime: dict, platform: str) -> str:
+    if runtime.get("runtime_kind") != "local":
+        return "当前不是本机运行环境，请使用下方 Docker/NAS 终端命令登录。"
     if not runtime.get("command"):
-        return {
-            "success": False,
-            "error": "未找到 sau CLI，请先运行 setup-social-publishing.bat。",
-        }
+        return "未找到 sau CLI，请先安装本机社交发布运行环境。"
     if not runtime.get("workdir_ready"):
-        return {
-            "success": False,
-            "error": "social-auto-upload 运行目录不存在，请先运行 setup-social-publishing.bat。",
-        }
+        return "social-auto-upload 运行目录不存在，请先安装本机社交发布运行环境。"
     if platform != "bilibili" and not runtime.get("browser_ready"):
-        return {
-            "success": False,
-            "error": "Patchright Chromium 尚未安装，请先运行 setup-social-publishing.bat。",
-        }
+        return "Patchright Chromium 尚未就绪，请先安装本机社交发布运行环境。"
+    return ""
 
-    args = _login_args(runtime, platform, account)
+
+def _launch_windows_terminal(runtime: dict, args: list[str]) -> None:
     command_line = subprocess.list2cmdline(args)
-    env = {
+    creation_flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+    subprocess.Popen(
+        ["cmd.exe", "/k", command_line],
+        cwd=str(runtime.get("workdir") or None),
+        env=_login_env(runtime),
+        creationflags=creation_flags,
+    )
+
+
+def _launch_macos_terminal(runtime: dict, args: list[str]) -> None:
+    workdir = str(runtime.get("workdir") or "")
+    browser_root = str(runtime.get("browser_root") or "")
+    shell_command = (
+        f"cd {shlex.quote(workdir)} && "
+        f"PLAYWRIGHT_BROWSERS_PATH={shlex.quote(browser_root)} "
+        f"PYTHONUNBUFFERED=1 {shlex.join(args)}"
+    )
+    apple_script_command = shell_command.replace("\\", "\\\\").replace('"', '\\"')
+    subprocess.Popen(
+        [
+            "osascript",
+            "-e",
+            f'tell application "Terminal" to do script "{apple_script_command}"',
+            "-e",
+            'tell application "Terminal" to activate',
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _login_env(runtime: dict) -> dict[str, str]:
+    return {
         **os.environ,
         "PYTHONUNBUFFERED": "1",
         "PLAYWRIGHT_BROWSERS_PATH": str(runtime.get("browser_root") or ""),
     }
 
+
+def _launch_local_login(runtime: dict, platform: str, account: str) -> dict:
+    error = _validate_local_login_runtime(runtime, platform)
+    if error:
+        return {"success": False, "error": error}
+
+    args = _login_args(runtime, platform, account)
     try:
-        creation_flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
-        subprocess.Popen(
-            ["cmd.exe", "/k", command_line],
-            cwd=str(runtime.get("workdir") or None),
-            env=env,
-            creationflags=creation_flags,
-        )
+        if os.name == "nt":
+            _launch_windows_terminal(runtime, args)
+            mode = "terminal"
+        elif sys.platform == "darwin":
+            if platform == "bilibili":
+                _launch_macos_terminal(runtime, args)
+                mode = "terminal"
+            else:
+                subprocess.Popen(
+                    args,
+                    cwd=str(runtime.get("workdir") or None),
+                    env=_login_env(runtime),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                mode = "browser"
+        else:
+            if platform == "bilibili":
+                return {
+                    "success": False,
+                    "error": "B站登录需要交互式终端，请复制下方手动登录命令执行。",
+                }
+            subprocess.Popen(
+                args,
+                cwd=str(runtime.get("workdir") or None),
+                env=_login_env(runtime),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            mode = "browser"
     except OSError as exc:
         return {"success": False, "error": str(exc)}
 
-    return {
-        "success": True,
-        "message": (
-            "已打开独立终端。B站登录会在终端显示二维码；如果二维码显示不完整，"
+    if platform == "bilibili":
+        message = (
+            "已打开独立终端。B站会在终端显示二维码；如果二维码显示不完整，"
             "请打开运行目录中的 qrcode.png 扫码。"
-            if platform == "bilibili"
-            else "已打开独立终端并启动可见 Chromium，请在弹出的平台登录页扫描二维码。"
-        ),
-    }
+        )
+    elif mode == "terminal":
+        message = "已打开独立终端并启动可见 Chromium，请在平台登录页扫描二维码。"
+    else:
+        message = "已启动可见 Chromium，请在弹出的平台登录页扫描二维码。"
+    return {"success": True, "message": message}
 
 
 def render_social_login_panel() -> None:
@@ -140,13 +197,22 @@ def render_social_login_panel() -> None:
     ).strip()
 
     with st.expander("账号登录与扫码", expanded=True):
-        st.caption(
-            "首次使用顺序：填写账号别名 → 点击“登录 / 重新登录” → 在弹出的浏览器或终端扫码 → 返回这里点击“检查登录”。"
-            "“检查登录”本身不会上传任何内容。"
-        )
+        if runtime.get("runtime_kind") == "docker":
+            st.caption(
+                "Docker/NAS 没有桌面环境：填写账号别名后，复制每个平台下方的 `docker exec -it ... login` "
+                "命令到 NAS 终端执行。上游会在终端打印二维码或提示二维码图片路径；扫码成功后 Cookie "
+                "写入持久化目录，再回到这里点击“检查登录”。"
+            )
+        else:
+            st.caption(
+                "本机验证顺序：填写账号别名 → 点击“登录 / 重新登录” → Windows/macOS 在弹出的浏览器或终端扫码 "
+                "→ 返回这里点击“检查登录”。“检查登录”本身不会上传任何内容。"
+            )
 
         if not runtime.get("ready"):
-            setup_command = runtime.get("setup_command") or "setup-social-publishing.bat"
+            setup_command = runtime.get("setup_command") or (
+                "setup-social-publishing.bat" if os.name == "nt" else "sh setup-social-publishing.sh"
+            )
             st.warning(
                 "浏览器发布环境尚未就绪，因此登录和检查按钮会保持不可用。"
                 f"请先运行 `{setup_command}`，安装完成后刷新页面。"
@@ -173,32 +239,33 @@ def render_social_login_panel() -> None:
                     _save_accounts(accounts)
 
                 action_cols = st.columns([1.2, 1.2, 2.6], vertical_alignment="center")
+                local_runtime = runtime.get("runtime_kind") == "local"
+                local_login_supported = local_runtime and (
+                    os.name == "nt" or sys.platform == "darwin" or platform != "bilibili"
+                )
                 can_login = bool(
                     account
+                    and local_login_supported
                     and runtime.get("command")
                     and runtime.get("workdir_ready")
                     and (platform == "bilibili" or runtime.get("browser_ready"))
                 )
                 can_check = bool(account and runtime.get("ready"))
 
-                if runtime.get("runtime_kind") == "local" and os.name == "nt":
-                    if action_cols[0].button(
-                        "登录 / 重新登录",
-                        key=f"social_login_panel_login_{platform}",
-                        use_container_width=True,
-                        disabled=not can_login,
-                    ):
-                        result = _launch_windows_login(runtime, platform, account)
-                        st.session_state[f"social_login_launch_{platform}"] = result
-                        st.rerun()
-                else:
-                    action_cols[0].button(
-                        "登录 / 重新登录",
-                        key=f"social_login_panel_login_{platform}",
-                        use_container_width=True,
-                        disabled=True,
-                        help="当前环境请使用下方终端登录命令。",
-                    )
+                if action_cols[0].button(
+                    "登录 / 重新登录",
+                    key=f"social_login_panel_login_{platform}",
+                    use_container_width=True,
+                    disabled=not can_login,
+                    help=(
+                        None
+                        if can_login
+                        else "Docker/NAS 请使用下方终端命令；本机环境未就绪时请先运行安装脚本。"
+                    ),
+                ):
+                    result = _launch_local_login(runtime, platform, account)
+                    st.session_state[f"social_login_launch_{platform}"] = result
+                    st.rerun()
 
                 if action_cols[1].button(
                     "检查登录",
@@ -238,7 +305,7 @@ def render_social_login_panel() -> None:
                     if platform == "bilibili" and runtime.get("runtime_kind") == "local":
                         st.caption(
                             "B站由上游 biliup 使用交互式终端登录；二维码无法完整显示时，可打开 "
-                            f"`{runtime.get('workdir')}\\qrcode.png` 扫码。"
+                            f"`{runtime.get('workdir')}{os.sep}qrcode.png` 扫码。"
                         )
                 else:
                     st.caption("填写账号别名后，登录按钮和对应终端命令会立即出现。")
