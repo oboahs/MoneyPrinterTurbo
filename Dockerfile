@@ -107,6 +107,7 @@ RUN if [ "$DOCKER_BUILD_MIRROR" = "china" ]; then \
 
 # Copy only the requirements.txt first to leverage Docker cache
 COPY requirements.txt ./
+COPY scripts/patch_social_auto_upload_runtime.py /tmp/patch_social_auto_upload_runtime.py
 
 # 本地默认优先国内 PyPI 镜像；GHCR 发布使用官方 PyPI，避免海外 runner 因跨境镜像访问变慢。
 RUN if [ "$PIP_USE_OFFICIAL" = "1" ]; then \
@@ -122,6 +123,12 @@ RUN if [ "$PIP_USE_OFFICIAL" = "1" ]; then \
 # requests package to the exact version pinned by the upstream project. Install
 # setuptools explicitly and disable build isolation for the editable install so
 # NAS builds do not trigger a second implicit package-index access.
+#
+# The pinned upstream runtime sometimes asks Patchright for channel="chrome".
+# The image intentionally installs Patchright Chromium instead of depending on a
+# separately installed Google Chrome package. After Chromium is installed, the
+# compatibility helper records its exact executable and patches the pinned
+# runtime to use that executable. Local Windows/macOS setup uses the same helper.
 RUN mkdir -p /opt/social-auto-upload && \
     git -C /opt/social-auto-upload init && \
     git -C /opt/social-auto-upload remote add origin "$SOCIAL_AUTO_UPLOAD_REPO" && \
@@ -151,12 +158,18 @@ RUN mkdir -p /opt/social-auto-upload && \
             'segno>=1.6.6') && \
         pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/social-auto-upload; \
     fi && \
-    mkdir -p /opt/social-auto-upload/cookies && \
+    mkdir -p /opt/social-auto-upload/cookies /opt/patchright-browsers && \
     if [ "$DOCKER_BUILD_MIRROR" = "china" ]; then \
         PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright patchright install chromium || patchright install chromium; \
     else \
         patchright install chromium; \
-    fi
+    fi && \
+    CHROME_PATH="$(python -c 'from patchright.sync_api import sync_playwright; p=sync_playwright().start(); print(p.chromium.executable_path); p.stop()')" && \
+    python /tmp/patch_social_auto_upload_runtime.py \
+        --source /opt/social-auto-upload \
+        --browser-executable "$CHROME_PATH" \
+        --browser-root /opt/patchright-browsers \
+        --upstream-ref "$SOCIAL_AUTO_UPLOAD_REF"
 
 # Now copy the rest of the codebase into the image
 COPY . .
@@ -173,6 +186,6 @@ CMD ["streamlit", "run", "./webui/App.py", "--server.address=0.0.0.0", "--server
 
 # 2. Run the Docker container using the following command
 ## For Linux or MacOS:
-# docker run -v $(pwd)/config.toml:/MoneyPrinterTurbo/config.toml -v $(pwd)/storage:/MoneyPrinterTurbo/storage -v $(pwd)/storage/social-auto-upload/cookies:/opt/social-auto-upload/cookies -p 127.0.0.1:8501:8501 moneyprinterturbo
-## For Windows:
-# docker run -v ${PWD}/config.toml:/MoneyPrinterTurbo/config.toml -v ${PWD}/storage:/MoneyPrinterTurbo/storage -v ${PWD}/storage/social-auto-upload/cookies:/opt/social-auto-upload/cookies -p 127.0.0.1:8501:8501 moneyprinterturbo
+# docker run -v $(pwd)/config.toml:/MoneyPrinterTurbo/config.toml -v $(pwd)/storage:/MoneyPrinterTurbo/storage -v $(pwd)/storage/social-auto-upload/runtime/cookies:/opt/social-auto-upload/cookies -p 127.0.0.1:8501:8501 moneyprinterturbo
+## For Windows PowerShell:
+# docker run -v ${PWD}/config.toml:/MoneyPrinterTurbo/config.toml -v ${PWD}/storage:/MoneyPrinterTurbo/storage -v ${PWD}/storage/social-auto-upload/runtime/cookies:/opt/social-auto-upload/cookies -p 127.0.0.1:8501:8501 moneyprinterturbo
