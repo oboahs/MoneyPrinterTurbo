@@ -101,7 +101,15 @@ class SocialAutoUploadService:
         # Do not infer Docker from the existence of /opt/social-auto-upload. A
         # developer can have similarly named folders on Linux/macOS, while the
         # project already has a tested container detector used elsewhere.
-        return bool(config.is_running_in_container())
+        # Keep this best-effort probe isolated from unrelated provider flows: a
+        # mocked or unusual /proc reader must not break Upload-Post or the WebUI.
+        try:
+            return bool(config.is_running_in_container())
+        except (OSError, TypeError, ValueError) as exc:
+            logger.debug(
+                f"container runtime probe unavailable, use local social runtime: {exc}"
+            )
+            return False
 
     def _default_workdir(self) -> str:
         if self._using_docker_runtime():
