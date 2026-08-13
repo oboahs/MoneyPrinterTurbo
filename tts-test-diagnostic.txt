@@ -1,0 +1,45 @@
+........................................s..............ss     [100%]
+=============================== warnings summary ===============================
+app/models/schema.py:53
+  /home/runner/work/MoneyPrinterTurbo-NAS/MoneyPrinterTurbo-NAS/app/models/schema.py:53: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    @pydantic.dataclasses.dataclass(config=_Config)
+
+app/models/schema.py:241
+  /home/runner/work/MoneyPrinterTurbo-NAS/MoneyPrinterTurbo-NAS/app/models/schema.py:241: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class TaskResponse(BaseResponse):
+
+app/models/schema.py:353
+  /home/runner/work/MoneyPrinterTurbo-NAS/MoneyPrinterTurbo-NAS/app/models/schema.py:353: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class TaskDeletionResponse(BaseResponse):
+
+app/models/schema.py:373
+  /home/runner/work/MoneyPrinterTurbo-NAS/MoneyPrinterTurbo-NAS/app/models/schema.py:373: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class VideoScriptResponse(BaseResponse):
+
+app/models/schema.py:386
+  /home/runner/work/MoneyPrinterTurbo-NAS/MoneyPrinterTurbo-NAS/app/models/schema.py:386: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class VideoTermsResponse(BaseResponse):
+
+app/models/schema.py:397
+  /home/runner/work/MoneyPrinterTurbo-NAS/MoneyPrinterTurbo-NAS/app/models/schema.py:397: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class VideoSocialMetadataResponse(BaseResponse):
+
+app/models/schema.py:412
+  /home/runner/work/MoneyPrinterTurbo-NAS/MoneyPrinterTurbo-NAS/app/models/schema.py:412: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class BgmRetrieveResponse(BaseResponse):
+
+app/models/schema.py:431
+  /home/runner/work/MoneyPrinterTurbo-NAS/MoneyPrinterTurbo-NAS/app/models/schema.py:431: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class BgmUploadResponse(BaseResponse):
+
+app/models/schema.py:441
+  /home/runner/work/MoneyPrinterTurbo-NAS/MoneyPrinterTurbo-NAS/app/models/schema.py:441: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class VideoMaterialRetrieveResponse(BaseResponse):
+
+app/models/schema.py:459
+  /home/runner/work/MoneyPrinterTurbo-NAS/MoneyPrinterTurbo-NAS/app/models/schema.py:459: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class VideoMaterialUploadResponse(BaseResponse):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+54 passed, 3 skipped, 10 warnings, 11 subtests passed in 9.72s
+EXIT_CODE=0
