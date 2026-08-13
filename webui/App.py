@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import streamlit as st
 
+from app import __fork_version__, __version__
 from app.services.social_auto_upload import social_auto_upload_service
 from webui.social_login_panel import render_social_login_panel
 
 
 st.set_page_config(
-    page_title="MoneyPrinterTurbo",
+    page_title=f"MoneyPrinterTurbo-NAS {__fork_version__}",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="auto",
@@ -95,6 +96,7 @@ selected = st.segmented_control(
     label_visibility="collapsed",
     width="content",
 )
+st.caption(f"MoneyPrinterTurbo-NAS {__fork_version__} · 上游 MoneyPrinterTurbo {__version__}")
 
 if selected and selected != page.title:
     target_page = social_page if selected == social_page.title else video_page
